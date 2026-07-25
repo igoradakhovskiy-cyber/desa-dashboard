@@ -10,3 +10,5 @@ dist
 public/creatives/*
 !public/creatives/.gitkeep
 public/data/*.enc
+# knowledge graph — build artefact, rebuilt with `/graphify . --update`
+graphify-out/
