@@ -1,0 +1,58 @@
+@import 'tailwindcss';
+
+/* ---- Premium dark BENTO theme tokens (Tailwind v4 @theme -> utilities) ---- */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+
+  --color-base: #0a0d14;      /* page background            -> bg-base */
+  --color-panel: #10141d;     /* elevated background        -> bg-panel */
+  --color-card: #141a25;      /* card surface               -> bg-card */
+  --color-card2: #1a2130;     /* nested surface             -> bg-card2 */
+  --color-line: #232c3d;      /* borders                    -> border-line */
+  --color-line2: #1a2130;     /* soft borders               -> border-line2 */
+
+  --color-ink: #e8ebf2;       /* primary text               -> text-ink */
+  --color-mute: #9aa3b7;      /* muted text                 -> text-mute */
+  --color-dim: #6b7488;       /* dim text                   -> text-dim */
+
+  --color-en: #4a92e0;        /* EN stream (blue)           -> text-en / bg-en */
+  --color-ru: #e2683c;        /* RU stream (coral)          -> text-ru / bg-ru */
+  --color-gold: #d8b878;      /* luxury accent              -> text-gold */
+  --color-pos: #46c08a;       /* positive delta */
+  --color-neg: #e2683c;       /* negative delta */
+  --color-warn: #e6b450;      /* warning / pending */
+}
+
+@layer base {
+  html { color-scheme: dark; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 600px at 82% -12%, rgba(74, 146, 224, 0.10), transparent 60%),
+      radial-gradient(900px 520px at -5% 0%, rgba(216, 184, 120, 0.06), transparent 55%),
+      var(--color-base);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* subtle glass card helper used across the dashboard */
+.bento {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)) , var(--color-card);
+  border: 1px solid var(--color-line);
+  border-radius: 1rem;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px -18px rgba(0, 0, 0, 0.8);
+}
+.bento-hover { transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease; }
+.bento-hover:hover { border-color: #33405a; transform: translateY(-2px); box-shadow: 0 18px 40px -22px rgba(0,0,0,0.9); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #263043; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #33405a; }
+::-webkit-scrollbar-track { background: transparent; }

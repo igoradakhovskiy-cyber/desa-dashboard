@@ -1,0 +1,78 @@
+name: Build & Deploy Desa Harmonis Dashboard
+
+on:
+  schedule:
+    - cron: '0 */3 * * *' # every 3 hours — refreshes BOTH Meta and the CRM sheet
+  push:
+    branches: [main]
+  workflow_dispatch: {} # manual "Run workflow" button
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      # Every knob is passed explicitly — the scripts have Desa defaults, but a
+      # silent fallback to a hardcoded value is exactly how a dashboard ends up
+      # quietly reporting the wrong account.
+      - name: Fetch fresh Meta data + creatives
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
+          META_ACCOUNT_ID: ${{ vars.META_ACCOUNT_ID }}
+          META_API_VERSION: v21.0
+          PROJECT_NAME: Desa Harmonis 2
+          MIN_DATE: '2026-06-16'
+          LEAD_TYPE: lead
+          PREVIEW_FORMAT: INSTAGRAM_STORY
+          PLAN_BUDGET: '7000'
+          PLAN_LEADS: '350'
+          PLAN_CPL: '20'
+          PLAN_QUAL: '35'
+          PLAN_CPQL: '200'
+        run: node scripts/fetch-meta.mjs
+
+      # Reads the CRM export straight from the link-shared Google Sheet — no OAuth,
+      # no service account. Fails loudly if the tab/layout changes or the join breaks.
+      - name: Join CRM data from Google Sheets
+        env:
+          SHEET_ID: ${{ vars.SHEET_ID }}
+          SHEET_TAB: client_data
+        run: node scripts/fetch-crm.mjs
+
+      - name: Encrypt dataset with the dashboard password
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: node scripts/encrypt-data.mjs
+
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
