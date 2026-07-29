@@ -104,6 +104,24 @@ export interface CrmUnmatched {
   examples: Record<string, string[]>
 }
 
+/**
+ * Whether the CRM layer on screen can be trusted. `stale` means the sheet was
+ * unusable on the last run and these numbers are the last good ones, frozen —
+ * the Meta side around them is still live.
+ */
+export interface CrmHealth {
+  ok: boolean
+  stale: boolean
+  reason: 'ok' | 'source_truncated' | 'join_broken' | 'no_rows_in_window'
+  message: string | null
+  hint: string | null
+  checked_at: string
+  frozen_at: string | null
+  rows_total: number
+  baseline_rows_total: number | null
+  match_rate: number
+}
+
 export interface Crm {
   source: string
   sheet_id: string
@@ -117,6 +135,7 @@ export interface Crm {
   status: CrmStatusRow[]
   geo: CrmGeoRow[]
   unmatched: CrmUnmatched
+  health?: CrmHealth // absent on datasets built before the health check existed
 }
 
 export interface Dataset {
@@ -132,8 +151,25 @@ export interface Dataset {
   ads: Ad[]
   creatives: CreativeGroup[]
   daily: DailyRow[]
+  /** Dictionary for `placement_daily`; index into this array is the placement id. */
+  placements?: Placement[]
+  /**
+   * [date, ad_id, placement_index, spend, impressions, clicks, leads]
+   *
+   * Positional on purpose — the object form is 2.5× the bytes, and this ships to
+   * the browser on every load. Same grain as `daily` plus the placement, so the
+   * existing date/language filters apply unchanged.
+   */
+  placement_daily?: PlacementRow[]
   crm?: Crm // absent if the CRM step was skipped
 }
+
+export interface Placement {
+  platform: string // facebook | instagram | audience_network | threads | messenger
+  position: string // feed | instagram_reels | instagram_stories | an_classic …
+}
+
+export type PlacementRow = [string, string, number, number, number, number, number]
 
 /** Aggregated metric bucket used throughout the UI. */
 export interface Metrics {

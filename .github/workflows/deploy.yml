@@ -47,11 +47,19 @@ jobs:
         run: node scripts/fetch-meta.mjs
 
       # Reads the CRM export straight from the link-shared Google Sheet — no OAuth,
-      # no service account. Fails loudly if the tab/layout changes or the join breaks.
+      # no service account.
+      #
+      # Deliberately NOT fatal: a bad sheet (a filter left on the tab truncates the
+      # export to whatever is visible) used to exit 1 and take the whole deploy with
+      # it, freezing perfectly healthy Meta data for days. Now it falls back to the
+      # last deployed CRM layer and flags it in the UI. DASHBOARD_PASSWORD is what
+      # lets it read that previous layer back out of the live dashboard.
       - name: Join CRM data from Google Sheets
         env:
           SHEET_ID: ${{ vars.SHEET_ID }}
           SHEET_TAB: client_data
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          DASHBOARD_URL: https://igoradakhovskiy-cyber.github.io/desa-dashboard/
         run: node scripts/fetch-crm.mjs
 
       - name: Encrypt dataset with the dashboard password

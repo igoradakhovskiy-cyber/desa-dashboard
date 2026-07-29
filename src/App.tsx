@@ -12,7 +12,9 @@ import { decryptDataset, fetchEncrypted, type EncBlob } from './lib/crypto'
 import PasswordGate from './components/PasswordGate'
 import Header from './components/Header'
 import KpiGrid from './components/KpiGrid'
+import CrmHealth from './components/CrmHealth'
 import CrmDiag from './components/CrmDiag'
+import Placements from './components/Placements'
 import TrendCharts from './components/TrendCharts'
 import Funnel from './components/Funnel'
 import LangSplit from './components/LangSplit'
@@ -85,6 +87,7 @@ export default function App() {
         <Header ds={ds} filters={filters} setFilters={setFilters} presets={presets} />
 
         <main className="mt-6 space-y-8">
+          <CrmHealth ds={ds} />
           <KpiGrid ds={ds} metrics={metrics} />
           <CrmDiag ds={ds} />
           <TrendCharts rows={rows} />
@@ -99,6 +102,7 @@ export default function App() {
             </div>
           )}
           <Campaigns ds={ds} idx={idx} rows={rows} crmRows={crmRows} />
+          <Placements ds={ds} idx={idx} filters={filters} crmRows={crmRows} />
           <CreativeGallery ds={ds} idx={idx} rows={rows} crmRows={crmRows} />
         </main>
 

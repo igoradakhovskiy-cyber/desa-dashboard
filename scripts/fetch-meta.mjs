@@ -336,6 +336,58 @@ async function main() {
   const activeAdIds = new Set(daily.map((r) => r.ad_id))
   console.log(`  ${daily.length} daily rows · ${activeAdIds.size} active ads`)
 
+  // Placement breakdown — a SECOND insights pass, because Meta will not return
+  // breakdown and non-breakdown rows in one call. Same grain as `daily`
+  // (date × ad) plus the placement, so the UI can reuse the exact same date and
+  // language filters instead of maintaining a parallel notion of "current slice".
+  //
+  // Stored as positional arrays against a `placements` dictionary: the verbose
+  // object form is 261KB for this account vs 107KB packed, and this payload is
+  // downloaded on every dashboard load.
+  console.log('▶ Fetching placement breakdown…')
+  const placeRows = await graphAll(`${ACCOUNT_ID}/insights`, {
+    level: 'ad',
+    fields: 'ad_id,spend,impressions,inline_link_clicks,actions',
+    breakdowns: 'publisher_platform,platform_position',
+    time_range: timeRange,
+    time_increment: '1',
+    limit: 500,
+  })
+  const placeDict = new Map() // "platform|position" -> index
+  const placementDaily = []
+  for (const r of placeRows) {
+    const spend = Number(r.spend) || 0
+    const impressions = Number(r.impressions) || 0
+    // Meta emits a row for every placement it *considered*; the empty ones are
+    // noise that would double the payload for nothing.
+    if (!spend && !impressions) continue
+    const platform = r.publisher_platform || 'unknown'
+    const position = r.platform_position || 'unknown'
+    const key = `${platform}|${position}`
+    let pi = placeDict.get(key)
+    if (pi === undefined) {
+      pi = placeDict.size
+      placeDict.set(key, pi)
+    }
+    const b = parseLeads(r.actions)
+    const leads =
+      PRIMARY_LEAD_TYPE === 'lead' ? b.lead : PRIMARY_LEAD_TYPE === 'offsite_conversion.fb_pixel_lead' ? b.pixel : b.onsite
+    placementDaily.push([
+      r.date_start,
+      r.ad_id,
+      pi,
+      Math.round(spend * 100) / 100,
+      impressions,
+      Number(r.inline_link_clicks) || 0,
+      leads || 0,
+    ])
+  }
+  const placements = [...placeDict.keys()].map((k) => {
+    const [platform, position] = k.split('|')
+    return { platform, position }
+  })
+  console.log(`  ${placementDaily.length} placement rows · ${placements.length} distinct placements`)
+
   // structure
   console.log('▶ Fetching campaigns / ad sets / ads…')
   const [allCampaigns, allAdsets, allAds] = await Promise.all([
@@ -451,6 +503,9 @@ async function main() {
     ads,
     creatives: [...groups.values()],
     daily,
+    placements,
+    // [date, ad_id, placement_index, spend, impressions, clicks, leads]
+    placement_daily: placementDaily,
   }
 
   await fs.writeFile(OUT_FILE, JSON.stringify(dataset, null, 2))
@@ -480,6 +535,30 @@ async function main() {
   const withPoster = ads.filter((a) => a.creative.poster).length
   const withPreview = ads.filter((a) => a.creative.preview_url).length
   console.log(`  posters ${withPoster}/${ads.length} · previews ${withPreview}/${ads.length}`)
+
+  // The placement pass is a separate API call, so it can silently disagree with
+  // the main one (wrong breakdown, partial paging). Reconciling both totals here
+  // is what turns "the numbers look plausible" into "the numbers are the same".
+  const pTot = placementDaily.reduce(
+    (o, r) => {
+      o.spend += r[3]
+      o.leads += r[6]
+      return o
+    },
+    { spend: 0, leads: 0 },
+  )
+  const spendDrift = Math.abs(pTot.spend - tot.spend)
+  console.log(
+    `  placements   $${pTot.spend.toFixed(2)} / ${pTot.leads} leads ` +
+      `(drift vs main: $${spendDrift.toFixed(2)}, ${pTot.leads - tot[PRIMARY_LEAD_TYPE === 'lead' ? 'lead' : 'pixel']} leads)`,
+  )
+  // Sub-cent rounding per row is expected; a real mismatch means the breakdown
+  // pass lost rows and the placement table would understate spend.
+  if (tot.spend > 0 && spendDrift / tot.spend > 0.01) {
+    throw new Error(
+      `placement spend $${pTot.spend.toFixed(2)} differs from account spend $${tot.spend.toFixed(2)} by more than 1% — breakdown pass is incomplete`,
+    )
+  }
   if (videoNodeBlocked) {
     console.log(
       `  note: ${videoNodeBlocked} video node(s) unreadable (app lacks page access) — ` +

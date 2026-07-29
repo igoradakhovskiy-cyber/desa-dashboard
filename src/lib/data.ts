@@ -189,6 +189,138 @@ export function splitByLang(rows: DailyRow[], idx: Index, crmRows?: CrmDaily[] |
   return out
 }
 
+// ------------------------------------------------------------ placements ----
+
+export interface PlacementAgg {
+  key: string
+  platform: string
+  position: string
+  spend: number
+  impressions: number
+  clicks: number
+  ctr: number
+  leads: number
+  cpl: number
+  /** Modelled, not measured — see placementTable(). null when there is no CRM layer. */
+  qual_est: number | null
+  cpql_est: number | null
+  spend_share: number
+}
+
+export interface PlacementTable {
+  rows: PlacementAgg[]
+  /** Quals the CRM has but no placement could claim — kept visible so totals reconcile. */
+  qual_unattributed: number
+  qual_total: number
+  estimated: boolean
+}
+
+/**
+ * Spend / leads / CPL per placement, plus a MODELLED qualified-lead split.
+ *
+ * The CRM export carries no placement field — a lead row knows its campaign and
+ * ad, never whether it came from Reels or Stories. So quals are distributed down
+ * each ad's own placement lead split: an ad with 10 quals whose leads were 70%
+ * Reels contributes 7 to Reels. This is an estimate and the UI must label it so.
+ *
+ * It holds up because the split is computed per ad rather than globally — ads
+ * differ wildly in placement mix, and averaging across them is what would make
+ * the number meaningless. Quals on ads with no Meta leads in the window cannot be
+ * placed at all and are reported separately instead of being silently spread.
+ */
+export function placementTable(
+  ds: Dataset,
+  idx: Index,
+  f: Filters,
+  crmRows?: CrmDaily[] | null,
+): PlacementTable {
+  const dict = ds.placements || []
+  const rows = ds.placement_daily || []
+  if (!dict.length || !rows.length) {
+    return { rows: [], qual_unattributed: 0, qual_total: 0, estimated: false }
+  }
+
+  const agg = new Map<number, { spend: number; impressions: number; clicks: number; leads: number }>()
+  // ad name -> placement index -> leads, for the qual split
+  const adSplit = new Map<string, Map<number, number>>()
+  const adLeadTotal = new Map<string, number>()
+
+  for (const [date, adId, pi, spend, impressions, clicks, leads] of rows) {
+    if (date < f.from || date > f.to) continue
+    const ad = idx.adById.get(adId)
+    if (f.lang !== 'all' && (!ad || ad.lang !== f.lang)) continue
+
+    const a = agg.get(pi) || { spend: 0, impressions: 0, clicks: 0, leads: 0 }
+    a.spend += spend
+    a.impressions += impressions
+    a.clicks += clicks
+    a.leads += leads
+    agg.set(pi, a)
+
+    if (ad && leads) {
+      let m = adSplit.get(ad.name)
+      if (!m) {
+        m = new Map()
+        adSplit.set(ad.name, m)
+      }
+      m.set(pi, (m.get(pi) || 0) + leads)
+      adLeadTotal.set(ad.name, (adLeadTotal.get(ad.name) || 0) + leads)
+    }
+  }
+
+  // ---- modelled qual split ----
+  const qualByPlacement = new Map<number, number>()
+  let qualTotal = 0
+  let qualUnattributed = 0
+  const hasCrm = !!crmRows
+  if (crmRows) {
+    for (const [adName, bucket] of crmByAd(crmRows)) {
+      if (!bucket.qual) continue
+      const split = adSplit.get(adName)
+      const total = adLeadTotal.get(adName) || 0
+      if (!split || !total) continue // no Meta leads to spread across — counted below
+      for (const [pi, leads] of split) {
+        qualByPlacement.set(pi, (qualByPlacement.get(pi) || 0) + (bucket.qual * leads) / total)
+      }
+    }
+    // Measured against the raw CRM total, not the crmByAd sum: quals on rows whose ad
+    // no longer exists never reach crmByAd at all, and they are just as unplaceable.
+    const placed = [...qualByPlacement.values()].reduce((s, v) => s + v, 0)
+    qualTotal = crmRows.reduce((s, r) => s + r.qual, 0)
+    qualUnattributed = Math.max(0, qualTotal - placed)
+  }
+
+  const totalSpend = [...agg.values()].reduce((s, a) => s + a.spend, 0)
+
+  const out: PlacementAgg[] = [...agg.entries()]
+    .map(([pi, a]) => {
+      const p = dict[pi] || { platform: 'unknown', position: 'unknown' }
+      const qual = hasCrm ? qualByPlacement.get(pi) || 0 : null
+      return {
+        key: `${p.platform}|${p.position}`,
+        platform: p.platform,
+        position: p.position,
+        spend: a.spend,
+        impressions: a.impressions,
+        clicks: a.clicks,
+        ctr: a.impressions ? (a.clicks / a.impressions) * 100 : 0,
+        leads: a.leads,
+        cpl: a.leads ? a.spend / a.leads : 0,
+        qual_est: qual,
+        cpql_est: qual && qual >= 0.5 ? a.spend / qual : null,
+        spend_share: totalSpend ? (a.spend / totalSpend) * 100 : 0,
+      }
+    })
+    .sort((a, b) => b.spend - a.spend)
+
+  return {
+    rows: out,
+    qual_unattributed: qualUnattributed,
+    qual_total: qualTotal,
+    estimated: hasCrm,
+  }
+}
+
 // ------------------------------------------------------------- CRM layer ----
 
 /** CRM rows for the current filter. Language comes from the row's campaign. */

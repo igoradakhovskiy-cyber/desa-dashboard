@@ -20,6 +20,7 @@
 
 import { promises as fs } from 'node:fs'
 import { existsSync } from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -32,6 +33,17 @@ const SHEET_ID = process.env.SHEET_ID || '1ipjwK0P-jGOy8KQ0_J58I8F8e7wRZL2OiZLnL
 const SHEET_TAB = process.env.SHEET_TAB || 'client_data'
 const QUAL_VALUE = (process.env.QUAL_VALUE || 'qualified').toLowerCase()
 const VERIFY = process.argv.includes('--verify')
+/** Local runs abort on a bad sheet; CI keeps the last good layer and deploys anyway. */
+const STRICT = process.argv.includes('--strict')
+/** Live dashboard, used to recover the previously deployed CRM layer as a baseline. */
+const DASHBOARD_URL =
+  process.env.DASHBOARD_URL || 'https://igoradakhovskiy-cyber.github.io/desa-dashboard/'
+/**
+ * A filter left on the sheet drops `rows_total` off a cliff — 3118 → 33 on
+ * 27.07.2026, which killed the whole deploy for two days. Anything past this
+ * much shrinkage is breakage, never organic: rows are only ever appended.
+ */
+const ROWS_DROP_LIMIT = 0.4
 
 /**
  * Columns are addressed BY INDEX, not by header name, on purpose: the sheet has
@@ -114,12 +126,105 @@ function bump(map, key, qual) {
   if (qual) v.qual++
 }
 
+/**
+ * Last successfully deployed CRM layer, read back out of the live dashboard's own
+ * encrypted blob.
+ *
+ * The alternative — committing a baseline file from CI — needs `contents: write`
+ * and pushes a commit every three hours. The deployed artefact is already the
+ * authoritative "last good state", costs no permissions, and self-heals: once a
+ * healthy run deploys, the next run's baseline is that healthy run.
+ *
+ * Returns null whenever anything at all goes wrong. A missing baseline must
+ * degrade to "no drop check", never to a failed build.
+ */
+async function loadDeployedBaseline() {
+  const password = process.env.DASHBOARD_PASSWORD
+  if (!password) return null
+  try {
+    const res = await fetch(new URL('data/latest.enc', DASHBOARD_URL))
+    if (!res.ok) return null
+    const blob = await res.json()
+    const key = crypto.pbkdf2Sync(password, Buffer.from(blob.salt, 'base64'), blob.iter, 32, 'sha256')
+    const ct = Buffer.from(blob.ct, 'base64')
+    const dec = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(blob.iv, 'base64'))
+    // encrypt-data.mjs appends the 16-byte GCM tag to the ciphertext
+    dec.setAuthTag(ct.subarray(ct.length - 16))
+    const plain = Buffer.concat([dec.update(ct.subarray(0, ct.length - 16)), dec.final()])
+    const prev = JSON.parse(plain.toString('utf8'))
+    return prev.crm || null
+  } catch {
+    return null
+  }
+}
+
+/** "1 строка / 3 строки / 33 строки / 3118 строк" — these strings go straight into the UI. */
+function plural(n, one, few, many) {
+  const m100 = n % 100
+  if (m100 >= 11 && m100 <= 14) return `${n} ${many}`
+  const m10 = n % 10
+  if (m10 === 1) return `${n} ${one}`
+  if (m10 >= 2 && m10 <= 4) return `${n} ${few}`
+  return `${n} ${many}`
+}
+const rowsRu = (n) => plural(n, 'строку', 'строки', 'строк')
+
+/**
+ * Names the failure instead of just detecting one. Returns null when healthy.
+ *
+ * The distinction that matters: a *truncated source* (rows vanished, but the ones
+ * left still join fine) and a *broken join* (rows are there, they stopped
+ * matching) look identical to a plain match-rate floor, and have opposite fixes.
+ */
+function diagnose({ baseline, rowsTotal, inWindow, rate }) {
+  const prev = baseline && baseline.rows_total
+  if (prev && rowsTotal < prev * (1 - ROWS_DROP_LIMIT)) {
+    const lost = prev - rowsTotal
+    return {
+      reason: 'source_truncated',
+      message:
+        `Таблица CRM отдала ${rowsRu(rowsTotal)} вместо ${prev} — пропало ${lost} ` +
+        `(−${(((prev - rowsTotal) / prev) * 100).toFixed(0)}%). Строки в эту выгрузку только добавляются, ` +
+        'так что это не естественная убыль.',
+      hint:
+        `Почти наверняка на вкладке "${SHEET_TAB}" оставлен фильтр: экспорт Google Sheets отдаёт ` +
+        'только видимые строки. Снимите фильтр (Данные → Отключить фильтр) и нажмите «Обновить данные».',
+    }
+  }
+  if (!inWindow) {
+    return {
+      reason: 'no_rows_in_window',
+      message: `В окне дашборда нет ни одной строки CRM (в таблице всего ${rowsRu(rowsTotal)}).`,
+      hint: `Проверьте фильтр на вкладке "${SHEET_TAB}", формат дат в колонке B и MIN_DATE.`,
+    }
+  }
+  if (rate < 50) {
+    return {
+      reason: 'join_broken',
+      message: `Склейка CRM с Meta ${rate.toFixed(1)}% — ниже порога 50%.`,
+      hint:
+        'Строки на месте, но не сходятся по UTM. Проверьте, что в объявлениях остались ' +
+        'utm_campaign={{campaign.name}} и utm_content={{ad.name}}.',
+    }
+  }
+  return null
+}
+
 // ------------------------------------------------------------------- main ---
 async function main() {
   if (!existsSync(DATA_FILE)) {
     throw new Error('.data/latest.json not found — run fetch-meta.mjs first')
   }
   const ds = JSON.parse(await fs.readFile(DATA_FILE, 'utf8'))
+  const baseline = await loadDeployedBaseline()
+  if (baseline) {
+    console.log(
+      `▶ Baseline from live dashboard: ${baseline.rows_total} sheet rows, ` +
+        `${baseline.rows_matched} matched (${baseline.fetched_at})`,
+    )
+  } else {
+    console.log('▶ No baseline available (first run, or dashboard unreachable) — drop check skipped')
+  }
 
   const url =
     `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq` +
@@ -271,10 +376,6 @@ async function main() {
     unmatched,
   }
 
-  ds.crm = crm
-  await fs.writeFile(DATA_FILE, JSON.stringify(ds, null, 2))
-  console.log(`✔ Wrote crm block into ${path.relative(ROOT, DATA_FILE)}`)
-
   // ---- cross-check -----------------------------------------------------------
   const metaLeads = ds.daily.reduce((s, r) => s + r.leads, 0)
   const metaSpend = ds.daily.reduce((s, r) => s + r.spend, 0)
@@ -290,11 +391,72 @@ async function main() {
       `unknown ad ${unmatched.unknown_ad} · no utm ${unmatched.no_utm}`,
   )
 
-  // Structural guards — these signal real breakage, not normal day-to-day drift.
-  if (!inWindow) throw new Error('no CRM rows inside the dashboard window — check MIN_DATE / tab')
-  if (rate < 50) {
-    throw new Error(`CRM match rate ${rate.toFixed(1)}% is below the 50% floor — UTM join likely broken`)
+  // ---- health --------------------------------------------------------------
+  // Ordered most-specific first: a truncated sheet also fails the match-rate
+  // check, and "someone left a filter on" is a far more actionable message than
+  // "the UTM join is broken" — which is what sent this pipeline down the wrong
+  // trail for two days.
+  const problem = diagnose({ baseline, rowsTotal: body.length, inWindow, rate })
+
+  if (problem && STRICT) throw new Error(problem.message)
+
+  if (problem && baseline) {
+    // Freeze: keep the last good CRM layer, let today's fresh Meta data deploy.
+    console.error(`\n⚠ ${problem.message}`)
+    console.error(`  → keeping the CRM layer from ${baseline.fetched_at} and deploying anyway.`)
+    console.error('  → Meta metrics are unaffected and stay live.')
+    ds.crm = {
+      ...baseline,
+      health: {
+        ok: false,
+        stale: true,
+        reason: problem.reason,
+        message: problem.message,
+        hint: problem.hint,
+        checked_at: new Date().toISOString(),
+        frozen_at: baseline.fetched_at,
+        rows_total: body.length,
+        baseline_rows_total: baseline.rows_total,
+        match_rate: Number(rate.toFixed(1)),
+      },
+    }
+  } else if (problem) {
+    // No baseline to fall back on: ship the bad layer but flag it hard, so the
+    // dashboard shows a warning instead of quietly presenting a wrong CPQL.
+    console.error(`\n⚠ ${problem.message}`)
+    console.error('  → no baseline to fall back on; publishing with a warning banner.')
+    crm.health = {
+      ok: false,
+      stale: false,
+      reason: problem.reason,
+      message: problem.message,
+      hint: problem.hint,
+      checked_at: new Date().toISOString(),
+      frozen_at: null,
+      rows_total: body.length,
+      baseline_rows_total: baseline ? baseline.rows_total : null,
+      match_rate: Number(rate.toFixed(1)),
+    }
+    ds.crm = crm
+  } else {
+    crm.health = {
+      ok: true,
+      stale: false,
+      reason: 'ok',
+      message: null,
+      hint: null,
+      checked_at: new Date().toISOString(),
+      frozen_at: null,
+      rows_total: body.length,
+      baseline_rows_total: baseline ? baseline.rows_total : null,
+      match_rate: Number(rate.toFixed(1)),
+    }
+    ds.crm = crm
   }
+
+  await fs.writeFile(DATA_FILE, JSON.stringify(ds, null, 2))
+  console.log(`\n✔ Wrote crm block into ${path.relative(ROOT, DATA_FILE)} (health: ${ds.crm.health.ok ? 'ok' : ds.crm.health.reason})`)
+  if (problem) return
 
   // ---- frozen expectations (opt-in, --verify) --------------------------------
   // Not run in CI: the sheet grows daily, so these numbers drift by design.

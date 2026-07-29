@@ -2,8 +2,9 @@ import type { Dataset, Lang } from '../types'
 import { LANGS } from '../types'
 import type { Filters, Preset } from '../lib/data'
 import { Segmented } from './ui'
+import { CrmStaleChip } from './CrmHealth'
 import { dateFull } from '../lib/format'
-import { LANG_LABEL } from '../config'
+import { COLORS, LANG_LABEL, REFRESH_URL, STALE_AFTER_HOURS, isAdmin } from '../config'
 
 export default function Header({
   ds,
@@ -34,6 +35,13 @@ export default function Header({
     hour: '2-digit',
     minute: '2-digit',
   })
+  // A silently frozen dashboard is the failure that actually costs money — the last
+  // outage went unnoticed for two days. Age is computed against the real clock, so a
+  // stalled rebuild turns the dot amber on its own.
+  const ageHours = (Date.now() - Date.parse(ds.generated_at)) / 3_600_000
+  const stale = ageHours > STALE_AFTER_HOURS
+  const dot = stale ? COLORS.warn : COLORS.pos
+  const admin = isAdmin()
 
   return (
     <header>
@@ -49,9 +57,40 @@ export default function Header({
             Facebook / Instagram · <span className="text-mute">{periodLabel}</span>
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-lg bg-card border border-line px-3 py-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-[#46c08a] animate-pulse" />
-          <span className="text-xs text-mute">данные на {freshness}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <CrmStaleChip ds={ds} />
+          <div
+            className="flex items-center gap-2 rounded-lg bg-card border px-3 py-1.5"
+            style={{ borderColor: stale ? COLORS.warn + '55' : undefined }}
+            title={
+              stale
+                ? `Обновление не приходило ${Math.floor(ageHours)} ч — обычно каждые 3 ч`
+                : 'Обновляется автоматически каждые 3 часа'
+            }
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${stale ? '' : 'animate-pulse'}`}
+              style={{ background: dot }}
+            />
+            <span className="text-xs text-mute">данные на {freshness}</span>
+            {stale && (
+              <span className="text-xs font-medium" style={{ color: COLORS.warn }}>
+                · {Math.floor(ageHours)} ч назад
+              </span>
+            )}
+          </div>
+          {admin && (
+            <a
+              href={REFRESH_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg bg-card border border-line px-3 py-1.5 text-xs text-mute
+                         transition-colors hover:text-ink hover:border-[#2a3448]"
+              title="Открыть GitHub Actions и нажать Run workflow — пересборка занимает ~1 минуту"
+            >
+              ↻ Обновить
+            </a>
+          )}
         </div>
       </div>
 
