@@ -5,7 +5,9 @@ import type {
   CreativeGroup,
   CrmDaily,
   CrmGeoRow,
-  CrmStatusRow,
+  CrmLostRow,
+  CrmStageDef,
+  CrmStageRow,
   DailyRow,
   Dataset,
   Lang,
@@ -363,26 +365,152 @@ function inScope(r: { date: string; campaign_id: string }, idx: Index, f: Filter
   return true
 }
 
-/** Sales-pipeline ladder for the current filter, ordered by STATUS_ORDER. */
-export function statusLadder(
+// ----------------------------------------------------------- sales funnel ---
+
+/**
+ * Which date a funnel event is filed under.
+ *
+ * `lead` — the day the lead was created. Pairs the event with the spend that
+ * bought it, so cost per stage is honest cohort economics; the trade-off is that
+ * recent days always look understated, because their leads have not had time to
+ * travel down the funnel yet.
+ *
+ * `event` — the day the stage was actually reached. Shows what the sales team did
+ * this week, but divides this period's spend by events belonging to leads bought
+ * in other periods.
+ */
+export type DateBasis = 'lead' | 'event'
+
+const stageDate = (r: CrmStageRow | CrmLostRow, basis: DateBasis) =>
+  basis === 'lead' ? r.lead_date : r.event_date
+
+function stageInScope(r: CrmStageRow | CrmLostRow, idx: Index, f: Filters, basis: DateBasis) {
+  return inScope({ date: stageDate(r, basis), campaign_id: r.campaign_id }, idx, f)
+}
+
+/** stage key -> leads that reached it or deeper, for the current filter. */
+function stageTotals(ds: Dataset, idx: Index, f: Filters, basis: DateBasis) {
+  const m = new Map<string, number>()
+  for (const r of ds.crm?.stages || []) {
+    if (!stageInScope(r, idx, f, basis)) continue
+    m.set(r.stage, (m.get(r.stage) || 0) + r.n)
+  }
+  return m
+}
+
+export interface StageRow {
+  stage: string
+  label: string
+  depth: number
+  n: number
+  /** % of qualified leads that got this far. */
+  share: number
+  /** % of the previous stage that got this far — where the funnel actually leaks. */
+  conv: number | null
+  /** spend / n. null when nothing reached this stage. */
+  cost: number | null
+}
+
+/**
+ * The cumulative funnel from qualified downwards, with the cost of each stage.
+ *
+ * `spend` is passed in rather than recomputed: the caller already has the Meta
+ * total for exactly this filter, and computing it twice invites the two numbers
+ * to drift apart.
+ */
+export function stageFunnel(
   ds: Dataset,
   idx: Index,
   f: Filters,
-  order: string[],
-): { status: string; n: number }[] {
-  if (!ds.crm) return []
-  const totals = new Map<string, number>()
-  for (const r of ds.crm.status as CrmStatusRow[]) {
-    if (!inScope(r, idx, f)) continue
-    totals.set(r.status, (totals.get(r.status) || 0) + r.n)
-  }
-  const known = order.filter((s) => totals.has(s)).map((s) => ({ status: s, n: totals.get(s)! }))
-  const rest = [...totals.entries()]
-    .filter(([s]) => !order.includes(s))
-    .map(([status, n]) => ({ status, n }))
-    .sort((a, b) => b.n - a.n)
-  return [...known, ...rest]
+  basis: DateBasis,
+  spend: number,
+  label: (key: string) => string,
+): StageRow[] {
+  return stageRowsFor(stageTotals(ds, idx, f, basis), ds.crm?.stage_defs, spend, label)
 }
+
+/**
+ * The same funnel shape for one slice — a creative, a campaign — from a bucket
+ * that `stagesByAd`/`stagesByCampaign` already produced, against that slice's own
+ * spend. Keeps the modal's ladder identical in meaning to the dashboard's.
+ */
+export function stageRowsFor(
+  bucket: Map<string, number> | undefined,
+  defs: CrmStageDef[] | undefined,
+  spend: number,
+  label: (key: string) => string,
+): StageRow[] {
+  if (!defs?.length) return []
+  const qual = bucket?.get(defs[0].key) || 0
+  let prev: number | null = null
+  return defs.map((def) => {
+    const n = bucket?.get(def.key) || 0
+    const row: StageRow = {
+      stage: def.key,
+      label: label(def.key),
+      depth: def.depth,
+      n,
+      share: qual ? (n / qual) * 100 : 0,
+      conv: prev === null ? null : prev ? (n / prev) * 100 : 0,
+      cost: n ? spend / n : null,
+    }
+    prev = n
+    return row
+  })
+}
+
+/** Stages with at least one lead in the current filter — nothing else is worth a column. */
+export function activeStages(ds: Dataset, idx: Index, f: Filters, basis: DateBasis): CrmStageDef[] {
+  if (!ds.crm?.stage_defs?.length) return []
+  const totals = stageTotals(ds, idx, f, basis)
+  return ds.crm.stage_defs.filter((d) => (totals.get(d.key) || 0) > 0)
+}
+
+/** Stages deeper than qualified that have data — the ones worth their own KPI tile. */
+export const deepStages = (ds: Dataset, idx: Index, f: Filters, basis: DateBasis) =>
+  activeStages(ds, idx, f, basis).filter((d) => d.depth > 0)
+
+/** Leads lost for good in the current filter (column «Lost / Closed»). */
+export function lostTotal(ds: Dataset, idx: Index, f: Filters, basis: DateBasis) {
+  let n = 0
+  for (const r of ds.crm?.lost || []) if (stageInScope(r, idx, f, basis)) n += r.n
+  return n
+}
+
+/** key -> (stage -> n), bucketed by campaign or by creative. */
+function stagesGroupedBy(
+  ds: Dataset,
+  idx: Index,
+  f: Filters,
+  basis: DateBasis,
+  keyFn: (r: CrmStageRow) => string | null,
+) {
+  const m = new Map<string, Map<string, number>>()
+  for (const r of ds.crm?.stages || []) {
+    if (!stageInScope(r, idx, f, basis)) continue
+    const k = keyFn(r)
+    if (k === null) continue
+    let b = m.get(k)
+    if (!b) {
+      b = new Map()
+      m.set(k, b)
+    }
+    b.set(r.stage, (b.get(r.stage) || 0) + r.n)
+  }
+  return m
+}
+
+/** campaign_id -> stage -> n */
+export const stagesByCampaign = (ds: Dataset, idx: Index, f: Filters, basis: DateBasis) =>
+  stagesGroupedBy(ds, idx, f, basis, (r) => r.campaign_id)
+
+/** ad name (creative key) -> stage -> n */
+export const stagesByAd = (ds: Dataset, idx: Index, f: Filters, basis: DateBasis) =>
+  stagesGroupedBy(ds, idx, f, basis, (r) => r.ad_key)
+
+/** `campaign_id|ad name` -> stage -> n, for the campaign drill-down. */
+export const stagesByCampaignAd = (ds: Dataset, idx: Index, f: Filters, basis: DateBasis) =>
+  stagesGroupedBy(ds, idx, f, basis, (r) => (r.ad_key ? `${r.campaign_id}|${r.ad_key}` : null))
 
 /** Country breakdown for the current filter, richest first. */
 export function geoTable(ds: Dataset, idx: Index, f: Filters) {

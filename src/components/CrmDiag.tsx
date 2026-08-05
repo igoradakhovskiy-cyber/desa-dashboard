@@ -37,6 +37,39 @@ export default function CrmDiag({ ds }: { ds: Dataset }) {
     { label: 'без UTM', n: u.no_utm, note: 'заявка пришла не из рекламы' },
   ].filter((r) => r.n > 0)
 
+  // Reasons a QUAL failed to join. Different list from the one above on purpose:
+  // the funnel tab holds only quals, so "came in without UTM" here means an organic
+  // qual — a fact about the business, not a defect in the join.
+  const hu = c.hist_unmatched
+  const histReasons: { label: string; n: number; note: string }[] = [
+    {
+      label: 'квал не из рекламы',
+      n: hu?.no_utm || 0,
+      note: 'WhatsApp, прямой заход, рекомендация — в цене этапов не участвует',
+    },
+    {
+      label: 'кампания вне периода дашборда',
+      n: hu?.unknown_campaign || 0,
+      note: 'квал со старого флайта, его расход в окно не входит',
+    },
+    { label: 'UTM не подставился', n: hu?.macro || 0, note: 'в CRM пришёл нераскрытый макрос' },
+    {
+      label: 'объявления уже нет в кабинете',
+      n: hu?.unknown_ad || 0,
+      note: 'квал засчитан кампании, но не виден в воронке креатива',
+    },
+    {
+      label: 'квал есть, а лида в client_data нет',
+      n: hu?.qual_only_in_history || 0,
+      note: 'лист квалов опередил лист лидов — квал посчитан, % квалификации чуть занижен',
+    },
+    {
+      label: 'в ячейке этапа не дата',
+      n: hu?.bad_stage_date || 0,
+      note: 'этап не засчитан; сделка учтена по последнему этапу с нормальной датой',
+    },
+  ].filter((r) => r.n > 0)
+
   const tone = rate >= 80 ? COLORS.pos : rate >= 50 ? COLORS.warn : COLORS.neg
 
   return (
@@ -79,6 +112,27 @@ export default function CrmDiag({ ds }: { ds: Dataset }) {
             <span className="text-mute">{c.tab}</span>: {int(c.rows_total)}, из них в периоде{' '}
             {int(c.rows_in_window)}.
           </p>
+
+          {c.stages?.length > 0 && (
+            <div className="border-t border-line2 pt-2.5 space-y-2">
+              <div className="text-mute">
+                Воронка и квалы — лист <span className="text-ink">{c.hist_tab}</span>:{' '}
+                <span className="tabular text-ink font-medium">{int(c.hist_rows_matched)}</span> из{' '}
+                <span className="tabular">{int(c.hist_rows_in_window)}</span> квалов в периоде
+                сопоставлено с рекламой (всего на листе {int(c.hist_rows_total)}).
+              </div>
+              {histReasons.map((r) => (
+                <div key={r.label} className="flex items-start gap-3">
+                  <span className="w-8 shrink-0 text-right tabular font-medium text-ink">
+                    {int(r.n)}
+                  </span>
+                  <span className="text-mute">
+                    {r.label} — <span className="text-dim">{r.note}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

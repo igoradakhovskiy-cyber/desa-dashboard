@@ -1,15 +1,28 @@
 import { useState } from 'react'
-import type { CrmDaily, DailyRow, Dataset, Metrics } from '../types'
-import { aggregate, groupBy, type CrmBucket, type Index } from '../lib/data'
+import type { CrmDaily, CrmStageDef, DailyRow, Dataset, Metrics } from '../types'
+import {
+  aggregate,
+  deepStages,
+  groupBy,
+  stagesByCampaign,
+  stagesByCampaignAd,
+  type CrmBucket,
+  type DateBasis,
+  type Filters,
+  type Index,
+} from '../lib/data'
 import { Card, SectionTitle, LangBadge } from './ui'
 import { int, money, moneySmart, pct } from '../lib/format'
-import { assetUrl, COLORS, langColor } from '../config'
+import { assetUrl, COLORS, langColor, stageColor, stageShort } from '../config'
 
 interface Group {
   id: string
   rows: DailyRow[]
   m: Metrics
 }
+
+/** stage -> n for one row of the table; absent means "this level cannot resolve it". */
+type StageBucket = Map<string, number> | undefined
 
 function rankGroups(rows: DailyRow[], keyFn: (r: DailyRow) => string | undefined): Group[] {
   const g = groupBy(rows, keyFn)
@@ -19,10 +32,27 @@ function rankGroups(rows: DailyRow[], keyFn: (r: DailyRow) => string | undefined
 }
 
 /**
- * The CRM export carries campaign and ad, but no ad set — so quals resolve at the
- * campaign and ad levels and the ad-set row honestly shows "—".
+ * The CRM export carries campaign and ad, but no ad set — so quals and funnel
+ * stages resolve at the campaign and ad levels and the ad-set row honestly shows "—".
+ *
+ * Only stages with data in the current period get a column: showing 08…13 as
+ * permanent zeroes would fill half the table with a funnel nobody has reached yet.
  */
-function Cells({ m, crm, hasCrm }: { m: Metrics; crm?: CrmBucket; hasCrm: boolean }) {
+function Cells({
+  m,
+  crm,
+  hasCrm,
+  stages,
+  stageBucket,
+  stageCount,
+}: {
+  m: Metrics
+  crm?: CrmBucket
+  hasCrm: boolean
+  stages: CrmStageDef[]
+  stageBucket: StageBucket
+  stageCount: number
+}) {
   return (
     <div className="flex items-center gap-2 tabular text-sm shrink-0">
       <span className="w-20 sm:w-24 text-right text-ink font-medium">{money(m.spend)}</span>
@@ -41,6 +71,20 @@ function Cells({ m, crm, hasCrm }: { m: Metrics; crm?: CrmBucket; hasCrm: boolea
           {crm?.qual ? moneySmart(m.spend / crm.qual) : '—'}
         </span>
       )}
+      {stages.map((d) => {
+        const n = stageBucket?.get(d.key) || 0
+        return (
+          <span key={d.key} className="hidden lg:flex w-[86px] justify-end items-baseline gap-1.5">
+            <span
+              className="font-medium"
+              style={{ color: n ? stageColor(d.depth, stageCount) : COLORS.dim }}
+            >
+              {stageBucket ? int(n) : '—'}
+            </span>
+            <span className="text-xs text-dim">{n ? moneySmart(m.spend / n) : ''}</span>
+          </span>
+        )
+      })}
       <span className="hidden sm:inline w-14 text-right text-dim">{pct(m.ctr)}</span>
     </div>
   )
@@ -62,11 +106,15 @@ export default function Campaigns({
   idx,
   rows,
   crmRows,
+  filters,
+  basis,
 }: {
   ds: Dataset
   idx: Index
   rows: DailyRow[]
   crmRows: CrmDaily[] | null
+  filters: Filters
+  basis: DateBasis
 }) {
   const [openCamp, setOpenCamp] = useState<string | null>(null)
   const [openAdset, setOpenAdset] = useState<string | null>(null)
@@ -74,6 +122,12 @@ export default function Campaigns({
   const camps = rankGroups(rows, (r) => idx.adById.get(r.ad_id)?.campaign_id)
   const maxSpend = Math.max(1, ...camps.map((c) => c.m.spend))
   const hasCrm = !!crmRows
+
+  const stages = deepStages(ds, idx, filters, basis)
+  const stageCount = ds.crm?.stage_defs?.length || 1
+  const stageByCamp = stagesByCampaign(ds, idx, filters, basis)
+  const stageByCampAd = stagesByCampaignAd(ds, idx, filters, basis)
+  const emptyStages: Map<string, number> = new Map()
 
   // campaign_id -> bucket, and `campaign_id|ad name` -> bucket
   const byCamp = new Map<string, CrmBucket>()
@@ -104,6 +158,11 @@ export default function Campaigns({
             <span className="w-16 text-right">CPL</span>
             {hasCrm && <span className="w-12 text-right">Квалы</span>}
             {hasCrm && <span className="w-16 text-right">CPQL</span>}
+            {stages.map((d) => (
+              <span key={d.key} className="hidden lg:inline w-[86px] text-right" title={d.key}>
+                {stageShort(d.key)}
+              </span>
+            ))}
             <span className="w-14 text-right">CTR</span>
           </div>
         }
@@ -137,7 +196,14 @@ export default function Campaigns({
                         {camp && <LangBadge lang={camp.lang} />}
                       </div>
                     </div>
-                    <Cells m={c.m} crm={byCamp.get(c.id)} hasCrm={hasCrm} />
+                    <Cells
+                      m={c.m}
+                      crm={byCamp.get(c.id)}
+                      hasCrm={hasCrm}
+                      stages={stages}
+                      stageBucket={stageByCamp.get(c.id) || emptyStages}
+                      stageCount={stageCount}
+                    />
                   </div>
                 </button>
 
@@ -150,6 +216,9 @@ export default function Campaigns({
                       setOpenAdset={setOpenAdset}
                       byCampAd={byCampAd}
                       hasCrm={hasCrm}
+                      stages={stages}
+                      stageByCampAd={stageByCampAd}
+                      stageCount={stageCount}
                     />
                   </div>
                 )}
@@ -172,6 +241,9 @@ function AdsetList({
   setOpenAdset,
   byCampAd,
   hasCrm,
+  stages,
+  stageByCampAd,
+  stageCount,
 }: {
   idx: Index
   rows: DailyRow[]
@@ -179,6 +251,9 @@ function AdsetList({
   setOpenAdset: (v: string | null) => void
   byCampAd: Map<string, CrmBucket>
   hasCrm: boolean
+  stages: CrmStageDef[]
+  stageByCampAd: Map<string, Map<string, number>>
+  stageCount: number
 }) {
   const adsets = rankGroups(rows, (r) => idx.adById.get(r.ad_id)?.adset_id)
   return (
@@ -196,9 +271,25 @@ function AdsetList({
               <span className="min-w-0 flex-1 truncate text-sm text-mute" title={adset?.name}>
                 {adset?.name || s.id}
               </span>
-              <Cells m={s.m} hasCrm={hasCrm} />
+              <Cells
+                m={s.m}
+                hasCrm={hasCrm}
+                stages={stages}
+                stageBucket={undefined}
+                stageCount={stageCount}
+              />
             </button>
-            {open && <AdList idx={idx} rows={s.rows} byCampAd={byCampAd} hasCrm={hasCrm} />}
+            {open && (
+              <AdList
+                idx={idx}
+                rows={s.rows}
+                byCampAd={byCampAd}
+                hasCrm={hasCrm}
+                stages={stages}
+                stageByCampAd={stageByCampAd}
+                stageCount={stageCount}
+              />
+            )}
           </div>
         )
       })}
@@ -211,11 +302,17 @@ function AdList({
   rows,
   byCampAd,
   hasCrm,
+  stages,
+  stageByCampAd,
+  stageCount,
 }: {
   idx: Index
   rows: DailyRow[]
   byCampAd: Map<string, CrmBucket>
   hasCrm: boolean
+  stages: CrmStageDef[]
+  stageByCampAd: Map<string, Map<string, number>>
+  stageCount: number
 }) {
   const ads = rankGroups(rows, (r) => r.ad_id)
   return (
@@ -239,7 +336,14 @@ function AdList({
             <span className="min-w-0 flex-1 truncate text-sm text-mute" title={ad?.name}>
               {ad?.name || a.id}
             </span>
-            <Cells m={a.m} crm={crm} hasCrm={hasCrm} />
+            <Cells
+              m={a.m}
+              crm={crm}
+              hasCrm={hasCrm}
+              stages={stages}
+              stageBucket={ad ? stageByCampAd.get(`${ad.campaign_id}|${ad.name}`) || new Map() : undefined}
+              stageCount={stageCount}
+            />
           </div>
         )
       })}

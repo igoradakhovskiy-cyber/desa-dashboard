@@ -11,6 +11,7 @@
     "fetch": "node scripts/fetch-meta.mjs",
     "crm": "node scripts/fetch-crm.mjs",
     "crm:verify": "node scripts/fetch-crm.mjs --verify",
+    "crm:test": "node scripts/test-crm.mjs",
     "encrypt": "node scripts/encrypt-data.mjs",
     "data": "node scripts/fetch-meta.mjs && node scripts/fetch-crm.mjs && node scripts/encrypt-data.mjs"
   },

@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react'
 import type { CreativeGroup, Metrics } from '../types'
-import type { Index } from '../lib/data'
-import { assetUrl, COLORS, QUAL_HINT } from '../config'
+import type { Index, StageRow } from '../lib/data'
+import { assetUrl, COLORS, QUAL_HINT, STAGE_HINT } from '../config'
 import { int, money, moneySmart, pct } from '../lib/format'
-import { LangBadge, PendingBadge } from './ui'
+import { InfoDot, LangBadge, PendingBadge } from './ui'
+import StageLadder from './StageLadder'
 
 export default function CreativeModal({
   group,
   m,
+  stages,
   idx,
   onClose,
 }: {
   group: CreativeGroup
   m: Metrics
+  stages: StageRow[]
   idx: Index
   onClose: () => void
 }) {
@@ -113,6 +116,16 @@ export default function CreativeModal({
               <p className="mt-2 text-[11px] text-dim">
                 {QUAL_HINT} Лидов в CRM за период: {int(m.crm_leads || 0)} (в Meta {int(m.leads)}).
               </p>
+            )}
+
+            {stages.length > 0 && (
+              <div className="mt-4">
+                <div className="mb-1.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-dim">
+                  Воронка этого креатива
+                  <InfoDot text={STAGE_HINT} />
+                </div>
+                <StageLadder rows={stages} compact />
+              </div>
             )}
 
             {campaigns.length > 0 && (

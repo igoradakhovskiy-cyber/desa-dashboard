@@ -1,6 +1,17 @@
 import { useMemo, useState } from 'react'
 import type { CreativeGroup, CrmDaily, DailyRow, Dataset, Metrics } from '../types'
-import { aggregate, crmByAd, groupBy, type Index } from '../lib/data'
+import {
+  aggregate,
+  crmByAd,
+  groupBy,
+  stageRowsFor,
+  stagesByAd,
+  type DateBasis,
+  type Filters,
+  type Index,
+  type StageRow,
+} from '../lib/data'
+import { stageLabel } from '../config'
 import { SectionTitle, Segmented } from './ui'
 import CreativeCard from './CreativeCard'
 import CreativeModal from './CreativeModal'
@@ -10,6 +21,8 @@ type SortKey = 'qual' | 'cpql' | 'leads' | 'cpl' | 'spend' | 'ctr'
 export interface Item {
   group: CreativeGroup
   m: Metrics
+  /** The creative's own funnel — empty when the dataset has no stage layer. */
+  stages: StageRow[]
 }
 
 export default function CreativeGallery({
@@ -17,11 +30,15 @@ export default function CreativeGallery({
   idx,
   rows,
   crmRows,
+  filters,
+  basis,
 }: {
   ds: Dataset
   idx: Index
   rows: DailyRow[]
   crmRows: CrmDaily[] | null
+  filters: Filters
+  basis: DateBasis
 }) {
   const hasCrm = !!crmRows
   const [sort, setSort] = useState<SortKey>(hasCrm ? 'qual' : 'leads')
@@ -30,6 +47,7 @@ export default function CreativeGallery({
   const items = useMemo<Item[]>(() => {
     const byKey = groupBy(rows, (r) => idx.adById.get(r.ad_id)?.name)
     const crmMap = crmByAd(crmRows)
+    const stageMap = stagesByAd(ds, idx, filters, basis)
     const list: Item[] = []
     for (const [key, rs] of byKey) {
       const group = idx.creativeByKey.get(key)
@@ -41,7 +59,11 @@ export default function CreativeGallery({
         : null
       const m = aggregate(rs, crmSlice)
       if (m.impressions <= 0) continue
-      list.push({ group, m })
+      list.push({
+        group,
+        m,
+        stages: stageRowsFor(stageMap.get(key), ds.crm?.stage_defs, m.spend, stageLabel),
+      })
     }
     // creatives with no qual yet sort last rather than pretending to be cheap
     const worstIfNone = (v: number | null, has: number | null) => (has ? v! : Infinity)
@@ -57,7 +79,7 @@ export default function CreativeGallery({
       ctr: (a, b) => b.m.ctr - a.m.ctr,
     }
     return list.sort(sorters[sort])
-  }, [rows, idx, sort, crmRows, hasCrm])
+  }, [ds, rows, idx, sort, crmRows, hasCrm, filters, basis])
 
   const topIsMeaningful =
     (sort === 'qual' && (items[0]?.m.qual_leads || 0) > 0) ||
@@ -100,6 +122,7 @@ export default function CreativeGallery({
               key={it.group.key}
               group={it.group}
               m={it.m}
+              stages={it.stages}
               top={i === 0 && topIsMeaningful}
               onClick={() => setOpen(it)}
             />
@@ -107,7 +130,15 @@ export default function CreativeGallery({
         </div>
       )}
 
-      {open && <CreativeModal group={open.group} m={open.m} idx={idx} onClose={() => setOpen(null)} />}
+      {open && (
+        <CreativeModal
+          group={open.group}
+          m={open.m}
+          stages={open.stages}
+          idx={idx}
+          onClose={() => setOpen(null)}
+        />
+      )}
     </section>
   )
 }

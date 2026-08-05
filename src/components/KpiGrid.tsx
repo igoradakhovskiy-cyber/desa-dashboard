@@ -1,8 +1,8 @@
 import type { Dataset, Metrics } from '../types'
-import { aggregate } from '../lib/data'
+import { aggregate, stageFunnel, type DateBasis, type Filters, type Index } from '../lib/data'
 import { int, money, moneySmart, pct } from '../lib/format'
 import { Card, InfoDot } from './ui'
-import { COLORS, QUAL_HINT } from '../config'
+import { COLORS, QUAL_HINT, STAGE_HINT, stageColor, stageLabel } from '../config'
 
 function Progress({ value, target, color }: { value: number; target: number; color: string }) {
   const p = target > 0 ? Math.min(100, (value / target) * 100) : 0
@@ -61,8 +61,52 @@ function Stat({
   )
 }
 
-export default function KpiGrid({ ds, metrics }: { ds: Dataset; metrics: Metrics }) {
+/** One deep funnel stage: how many got there, and what each one cost. */
+function StageTile({
+  label,
+  n,
+  cost,
+  color,
+}: {
+  label: string
+  n: number
+  cost: number | null
+  color: string
+}) {
+  return (
+    <Card className="p-3.5">
+      <div className="text-[11px] font-medium text-mute uppercase tracking-wide truncate" title={label}>
+        {label}
+      </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="font-display text-xl font-semibold tabular" style={{ color }}>
+          {int(n)}
+        </span>
+        <span className="text-xs text-dim tabular">{cost === null ? '—' : moneySmart(cost)}</span>
+      </div>
+    </Card>
+  )
+}
+
+export default function KpiGrid({
+  ds,
+  metrics,
+  idx,
+  filters,
+  basis,
+}: {
+  ds: Dataset
+  metrics: Metrics
+  idx: Index
+  filters: Filters
+  basis: DateBasis
+}) {
   const m = metrics
+  // Stages below the qual, and only those with something in them: an empty tile
+  // row for 08…13 would read as "we measure this and it is zero", when the truth
+  // is that no deal has got that far yet.
+  const funnel = stageFunnel(ds, idx, filters, basis, m.spend, stageLabel)
+  const deep = funnel.filter((r) => r.depth > 0 && r.n > 0)
   // Plan progress = month-to-date of the latest data month (all languages).
   const monthPrefix = ds.date_max.slice(0, 7)
   const month = aggregate(
@@ -153,6 +197,26 @@ export default function KpiGrid({ ds, metrics }: { ds: Dataset; metrics: Metrics
           accent={COLORS.qual}
         />
       </div>
+
+      {deep.length > 0 && (
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-dim">
+            Глубже квала · количество и цена
+            <InfoDot text={STAGE_HINT} />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            {deep.map((r) => (
+              <StageTile
+                key={r.stage}
+                label={r.label}
+                n={r.n}
+                cost={r.cost}
+                color={stageColor(r.depth, funnel.length)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

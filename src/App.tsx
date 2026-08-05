@@ -6,6 +6,7 @@ import {
   buildPresets,
   filterCrm,
   filterRows,
+  type DateBasis,
   type Filters,
 } from './lib/data'
 import { decryptDataset, fetchEncrypted, type EncBlob } from './lib/crypto'
@@ -32,6 +33,13 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null)
   const [gateErr, setGateErr] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters | null>(null)
+  /**
+   * Which date the funnel stages are filed under. Lives here, not inside the
+   * funnel card, because the KPI tiles, the campaign table and the creative
+   * gallery all show stage numbers — flipping the basis in one place and not the
+   * others would put two contradictory funnels on the same screen.
+   */
+  const [basis, setBasis] = useState<DateBasis>('lead')
 
   useEffect(() => {
     fetchEncrypted()
@@ -88,7 +96,7 @@ export default function App() {
 
         <main className="mt-6 space-y-8">
           <CrmHealth ds={ds} />
-          <KpiGrid ds={ds} metrics={metrics} />
+          <KpiGrid ds={ds} metrics={metrics} idx={idx} filters={filters} basis={basis} />
           <CrmDiag ds={ds} />
           <TrendCharts rows={rows} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -97,13 +105,34 @@ export default function App() {
           </div>
           {ds.crm && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <SalesFunnel ds={ds} idx={idx} filters={filters} />
+              <SalesFunnel
+                ds={ds}
+                idx={idx}
+                filters={filters}
+                basis={basis}
+                setBasis={setBasis}
+                spend={metrics.spend}
+              />
               <GeoTable ds={ds} idx={idx} filters={filters} />
             </div>
           )}
-          <Campaigns ds={ds} idx={idx} rows={rows} crmRows={crmRows} />
+          <Campaigns
+            ds={ds}
+            idx={idx}
+            rows={rows}
+            crmRows={crmRows}
+            filters={filters}
+            basis={basis}
+          />
           <Placements ds={ds} idx={idx} filters={filters} crmRows={crmRows} />
-          <CreativeGallery ds={ds} idx={idx} rows={rows} crmRows={crmRows} />
+          <CreativeGallery
+            ds={ds}
+            idx={idx}
+            rows={rows}
+            crmRows={crmRows}
+            filters={filters}
+            basis={basis}
+          />
         </main>
 
         <footer className="mt-12 pt-6 border-t border-line text-xs text-dim flex flex-wrap items-center justify-between gap-2">
@@ -112,7 +141,8 @@ export default function App() {
             {ds.crm && ' + выгрузка CRM'}
           </span>
           <span>
-            Обновляется автоматически каждые 3 часа · лид = событие «lead» · квал = «Qualified» в CRM
+            Обновляется автоматически каждые 3 часа · лид = событие «lead» · квал и воронка — лист
+            «История статусов»
           </span>
         </footer>
       </div>

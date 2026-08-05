@@ -1,19 +1,26 @@
 import type { CreativeGroup, Metrics } from '../types'
-import { assetUrl, COLORS } from '../config'
+import type { StageRow } from '../lib/data'
+import { assetUrl, COLORS, stageColor } from '../config'
 import { int, money, moneySmart, pct } from '../lib/format'
 import { LangBadge } from './ui'
 
 export default function CreativeCard({
   group,
   m,
+  stages = [],
   top,
   onClick,
 }: {
   group: CreativeGroup
   m: Metrics
+  stages?: StageRow[]
   top?: boolean
   onClick: () => void
 }) {
+  // The deepest stage this creative actually reached. One badge, not a ladder:
+  // the card has room for the headline, and the full funnel is one click away.
+  const deepest = [...stages].reverse().find((s) => s.depth > 0 && s.n > 0)
+
   return (
     <button
       onClick={onClick}
@@ -79,6 +86,20 @@ export default function CreativeCard({
           Расход {money(m.spend)}
           {m.qual_leads !== null && <> · CPL {moneySmart(m.cpl)}</>}
         </div>
+        {deepest && (
+          <div className="mt-1.5">
+            <span
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur"
+              style={{
+                color: stageColor(deepest.depth, stages.length),
+                background: 'rgba(0,0,0,.42)',
+              }}
+              title={`${deepest.label} · ${deepest.stage}`}
+            >
+              {deepest.label} · {int(deepest.n)}
+            </span>
+          </div>
+        )}
       </div>
     </button>
   )

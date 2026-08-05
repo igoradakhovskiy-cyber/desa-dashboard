@@ -93,28 +93,73 @@ export interface CrmGeoRow {
   qual: number
 }
 
+/** One funnel stage, in the order the columns appear on the «История статусов» tab. */
+export interface CrmStageDef {
+  key: string // e.g. "06.Meeting Set"
+  depth: number // 0 = qualified; larger is deeper down the funnel
+}
+
+/**
+ * Qualified leads that reached `stage` OR ANY DEEPER ONE.
+ *
+ * Cumulative on purpose: sales routinely stamps a later stage without back-filling
+ * the one before it, so counting each column on its own produces a funnel that
+ * grows downwards. Every row therefore appears once per stage it got past.
+ *
+ * Two dates, because they answer different questions and the UI switches between
+ * them: `lead_date` pairs the event with the spend that bought the lead (cohort),
+ * `event_date` is when the stage was actually reached.
+ */
+export interface CrmStageRow {
+  stage: string
+  lead_date: string
+  event_date: string
+  campaign_id: string
+  ad_key: string | null
+  n: number
+}
+
+/** Terminal loss (column «Lost / Closed») — not a stage, never part of the ladder. */
+export interface CrmLostRow {
+  lead_date: string
+  event_date: string
+  campaign_id: string
+  ad_key: string | null
+  n: number
+}
+
 /** Rows the UTM join could not attribute — surfaced, never silently dropped. */
 export interface CrmUnmatched {
   macro: number // Meta never substituted {{campaign.name}} / {{ad.name}}
   unknown_campaign: number // older flight, outside the dashboard window
   unknown_ad: number // campaign matched, ad no longer in the account
-  no_utm: number
+  no_utm: number // organic: WhatsApp, direct, referral — "—" in the UTM cells
   bad_date: number
   out_of_window: number
   examples: Record<string, string[]>
+  /** Stage layer only: a qual whose lead has no row on the client_data tab yet. */
+  qual_only_in_history?: number
+  /** Stage layer only: text where a stage date was expected. */
+  bad_stage_date?: number
 }
 
 /**
- * Whether the CRM layer on screen can be trusted. `stale` means the sheet was
+ * Whether a CRM source on screen can be trusted. `stale` means that tab was
  * unusable on the last run and these numbers are the last good ones, frozen —
- * the Meta side around them is still live.
+ * the Meta side, and the other tab, are still live.
  */
 export interface CrmHealth {
   ok: boolean
   stale: boolean
-  reason: 'ok' | 'source_truncated' | 'join_broken' | 'no_rows_in_window'
+  reason:
+    | 'ok'
+    | 'source_truncated'
+    | 'join_broken'
+    | 'no_rows_in_window'
+    | 'date_format_broken'
   message: string | null
   hint: string | null
+  tab: string // which tab this verdict is about
   checked_at: string
   frozen_at: string | null
   rows_total: number
@@ -125,17 +170,30 @@ export interface CrmHealth {
 export interface Crm {
   source: string
   sheet_id: string
+  /** «client_data» — every lead. Drives `daily.leads`, `status`, `geo.leads`. */
   tab: string
+  /** «История статусов» — quals only. Drives `daily.qual`, `geo.qual`, `stages`. */
+  hist_tab: string
   fetched_at: string
+  hist_fetched_at: string | null
   rows_total: number
   rows_in_window: number
   rows_matched: number
+  unmatched: CrmUnmatched
+  hist_rows_total: number
+  hist_rows_in_window: number
+  hist_rows_matched: number
+  hist_unmatched: CrmUnmatched
   qual_total: number
   daily: CrmDaily[]
   status: CrmStatusRow[]
   geo: CrmGeoRow[]
-  unmatched: CrmUnmatched
+  stage_defs: CrmStageDef[]
+  stages: CrmStageRow[]
+  lost: CrmLostRow[]
+  /** Worst of the two sources — what the banner shows. */
   health?: CrmHealth // absent on datasets built before the health check existed
+  health_sources?: { client_data: CrmHealth; stages: CrmHealth }
 }
 
 export interface Dataset {
