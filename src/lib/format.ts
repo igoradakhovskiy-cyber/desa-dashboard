@@ -12,6 +12,16 @@ export const money2 = (n: number) => '$' + nf2.format(n || 0)
 export const moneySmart = (n: number) => (Math.abs(n) >= 100 ? money(n) : '$' + nf2.format(n || 0))
 export const pct = (n: number, d: 1 | 2 = 2) => (d === 2 ? nf2 : nf1).format(n || 0) + '%'
 
+/** Russian plural: plural(3, 'страна', 'страны', 'стран') -> 'страны' */
+export function plural(n: number, one: string, few: string, many: string) {
+  const a = Math.abs(Math.round(n)) % 100
+  if (a > 10 && a < 20) return many
+  const b = a % 10
+  if (b === 1) return one
+  if (b >= 2 && b <= 4) return few
+  return many
+}
+
 /** compact for chart axes: 12.3k, 1.2M */
 export const compact = (n: number) => {
   const a = Math.abs(n)

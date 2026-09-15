@@ -512,18 +512,78 @@ export const stagesByAd = (ds: Dataset, idx: Index, f: Filters, basis: DateBasis
 export const stagesByCampaignAd = (ds: Dataset, idx: Index, f: Filters, basis: DateBasis) =>
   stagesGroupedBy(ds, idx, f, basis, (r) => (r.ad_key ? `${r.campaign_id}|${r.ad_key}` : null))
 
-/** Country breakdown for the current filter, richest first. */
-export function geoTable(ds: Dataset, idx: Index, f: Filters) {
-  if (!ds.crm) return []
-  const m = new Map<string, CrmBucket>()
-  for (const r of ds.crm.geo as CrmGeoRow[]) {
-    if (!inScope(r, idx, f)) continue
-    const b = m.get(r.country) || { leads: 0, qual: 0 }
-    b.leads += r.leads
-    b.qual += r.qual
-    m.set(r.country, b)
+export interface GeoRow {
+  country: string // ISO code
+  name: string // Russian display name
+  spend: number
+  leads: number // Meta leads, i.e. attributed to the delivery country
+  cpl: number | null
+  crm_leads: number // rows the CRM recorded against this country
+  qual: number
+  cpql: number | null // null when nothing was spent in that country
+  qual_rate: number | null
+  impressions: number
+  clicks: number
+  /** CRM has leads here but Meta never delivered — a different geography, not a gap. */
+  no_delivery: boolean
+}
+
+/**
+ * Full country P&L, joining the two sources on the ISO code.
+ *
+ * The two geographies are NOT the same thing and the join is honest about it:
+ * Meta reports the country the ad was *delivered* in, the CRM reports whatever
+ * the phone number resolved to. They agree within a lead or two per country, but
+ * a handful of CRM countries were never targeted at all (someone clicking while
+ * abroad) — those get `no_delivery` so the UI can keep them out of the money
+ * columns instead of printing a $0 CPQL.
+ *
+ * Spend and Meta leads are real per-country figures from `breakdowns=country`,
+ * never a proportional spread, which is what makes CPL and CPQL here usable for
+ * moving budget around.
+ */
+export function geoTable(ds: Dataset, idx: Index, f: Filters): GeoRow[] {
+  const rows = new Map<
+    string,
+    { spend: number; leads: number; impressions: number; clicks: number; crm_leads: number; qual: number }
+  >()
+  const get = (c: string) => {
+    let v = rows.get(c)
+    if (!v) rows.set(c, (v = { spend: 0, leads: 0, impressions: 0, clicks: 0, crm_leads: 0, qual: 0 }))
+    return v
   }
-  return [...m.entries()]
-    .map(([country, b]) => ({ country, ...b, rate: b.leads ? (b.qual / b.leads) * 100 : 0 }))
-    .sort((a, b) => b.qual - a.qual || b.leads - a.leads)
+
+  const names = ds.geo_countries || []
+  for (const [date, campaign_id, ci, spend, impressions, clicks, leads] of ds.geo_daily || []) {
+    if (!inScope({ date, campaign_id }, idx, f)) continue
+    const v = get(names[ci])
+    v.spend += spend
+    v.leads += leads
+    v.impressions += impressions
+    v.clicks += clicks
+  }
+  for (const r of (ds.crm?.geo || []) as CrmGeoRow[]) {
+    if (!inScope(r, idx, f)) continue
+    const v = get(r.country)
+    v.crm_leads += r.leads
+    v.qual += r.qual
+  }
+
+  return [...rows.entries()]
+    .map(([country, v]) => ({
+      country,
+      name: ds.country_names?.[country] || country,
+      spend: v.spend,
+      leads: v.leads,
+      cpl: v.leads ? v.spend / v.leads : null,
+      crm_leads: v.crm_leads,
+      qual: v.qual,
+      cpql: v.spend > 0 && v.qual ? v.spend / v.qual : null,
+      qual_rate: v.crm_leads ? (v.qual / v.crm_leads) * 100 : null,
+      impressions: v.impressions,
+      clicks: v.clicks,
+      no_delivery: v.spend <= 0,
+    }))
+    .filter((r) => r.spend > 0 || r.crm_leads > 0)
+    .sort((a, b) => b.spend - a.spend || b.qual - a.qual)
 }

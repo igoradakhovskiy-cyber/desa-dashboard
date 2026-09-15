@@ -31,7 +31,11 @@ if (!existsSync(IN_FILE)) {
   process.exit(1)
 }
 
-const plaintext = await fs.readFile(IN_FILE)
+// Minified on the way in. The file on disk stays pretty-printed because that is
+// what makes it readable while debugging a run; the indentation has no business
+// in the blob every visitor downloads — on this dataset it is half the bytes.
+const raw = await fs.readFile(IN_FILE, 'utf8')
+const plaintext = Buffer.from(JSON.stringify(JSON.parse(raw)))
 const salt = crypto.randomBytes(16)
 const iv = crypto.randomBytes(12)
 const key = crypto.pbkdf2Sync(password, salt, ITER, 32, 'sha256')
@@ -53,5 +57,6 @@ const blob = {
 await fs.mkdir(path.dirname(OUT_FILE), { recursive: true })
 await fs.writeFile(OUT_FILE, JSON.stringify(blob))
 console.log(
-  `✔ Encrypted ${(plaintext.length / 1024).toFixed(0)}KB → ${path.relative(ROOT, OUT_FILE)} (${(ct.length / 1024).toFixed(0)}KB)`,
+  `✔ Encrypted ${(raw.length / 1024).toFixed(0)}KB → ${(plaintext.length / 1024).toFixed(0)}KB minified ` +
+    `→ ${path.relative(ROOT, OUT_FILE)} (${(ct.length / 1024).toFixed(0)}KB)`,
 )

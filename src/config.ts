@@ -29,6 +29,11 @@ export const langColor = (lang: string) =>
 export const assetUrl = (p?: string | null) => (p ? import.meta.env.BASE_URL + p : '')
 export const LANG_LABEL: Record<string, string> = { ru: 'RU', en: 'EN', de: 'DE', all: 'Все' }
 
+export const GEO_HINT =
+  'Расход и лиды — из Meta, по стране показа объявления. Квалы — из CRM, по стране в карточке сделки. ' +
+  'Это две разные географии: обычно они сходятся, но лид мог кликнуть из поездки. ' +
+  'Строки без расхода вынесены вниз отдельно.'
+
 // Meta lead action types are consistent for this account (lead == fb_pixel_lead == onsite_web_lead).
 export const LEAD_HINT = 'Лид = событие «lead» из Meta (совпадает с pixel/onsite-лидом)'
 export const QUAL_HINT =

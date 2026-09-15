@@ -19,6 +19,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { nameMapFor } from './countries.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -388,6 +389,56 @@ async function main() {
   })
   console.log(`  ${placementDaily.length} placement rows · ${placements.length} distinct placements`)
 
+  // Country breakdown — a THIRD insights pass, for the same reason as placements:
+  // Meta will not return breakdown and non-breakdown rows in one call. Run at
+  // CAMPAIGN level, not ad level: `breakdowns=country` × ad × day is tens of
+  // thousands of rows this account would only ever sum back up, and the geo table
+  // filters by date and language only — language being a property of the campaign.
+  //
+  // This is real per-country spend from Meta, NOT leads spread proportionally.
+  // It is what makes CPL and CPQL by country trustworthy.
+  console.log('▶ Fetching country breakdown…')
+  const geoRaw = await graphAll(`${ACCOUNT_ID}/insights`, {
+    level: 'campaign',
+    fields: 'campaign_id,spend,impressions,inline_link_clicks,actions',
+    breakdowns: 'country',
+    time_range: timeRange,
+    time_increment: '1',
+    limit: 500,
+  })
+  //
+  // Packed against a country dictionary for the same reason as placements: 35
+  // countries × 11 campaigns × 90 days is 3800 rows, and the object form of them
+  // is 459KB — more than the whole rest of the dataset, downloaded on every load.
+  const geoDict = new Map() // ISO code -> index
+  const geoDaily = []
+  for (const r of geoRaw) {
+    const spend = Math.round((Number(r.spend) || 0) * 100) / 100
+    const b = parseLeads(r.actions)
+    const leads =
+      PRIMARY_LEAD_TYPE === 'lead' ? b.lead : PRIMARY_LEAD_TYPE === 'offsite_conversion.fb_pixel_lead' ? b.pixel : b.onsite
+    // days where a country saw impressions but cost nothing and produced nothing
+    // add rows without adding information
+    if (!spend && !leads) continue
+    const iso = r.country || 'ZZ'
+    let ci = geoDict.get(iso)
+    if (ci === undefined) {
+      ci = geoDict.size
+      geoDict.set(iso, ci)
+    }
+    geoDaily.push([
+      r.date_start,
+      r.campaign_id,
+      ci,
+      spend,
+      Number(r.impressions) || 0,
+      Number(r.inline_link_clicks) || 0,
+      leads || 0,
+    ])
+  }
+  const geoCountries = [...geoDict.keys()]
+  console.log(`  ${geoDaily.length} country-day rows · ${geoCountries.length} countries`)
+
   // structure
   console.log('▶ Fetching campaigns / ad sets / ads…')
   const [allCampaigns, allAdsets, allAds] = await Promise.all([
@@ -506,6 +557,12 @@ async function main() {
     placements,
     // [date, ad_id, placement_index, spend, impressions, clicks, leads]
     placement_daily: placementDaily,
+    /** Dictionary for `geo_daily`; index into this array is the country id. */
+    geo_countries: geoCountries,
+    // [date, campaign_id, country_index, spend, impressions, clicks, leads]
+    geo_daily: geoDaily,
+    // fetch-crm.mjs adds any ISO code the CRM knows about but Meta never delivered to
+    country_names: nameMapFor(geoCountries),
   }
 
   await fs.writeFile(OUT_FILE, JSON.stringify(dataset, null, 2))
@@ -557,6 +614,27 @@ async function main() {
   if (tot.spend > 0 && spendDrift / tot.spend > 0.01) {
     throw new Error(
       `placement spend $${pTot.spend.toFixed(2)} differs from account spend $${tot.spend.toFixed(2)} by more than 1% — breakdown pass is incomplete`,
+    )
+  }
+
+  // Same reconciliation for the country pass. A geo table that quietly holds 80%
+  // of the spend would still look right and price every country wrong.
+  const gTot = geoDaily.reduce(
+    (o, r) => {
+      o.spend += r[3]
+      o.leads += r[6]
+      return o
+    },
+    { spend: 0, leads: 0 },
+  )
+  const geoDrift = Math.abs(gTot.spend - tot.spend)
+  console.log(
+    `  geo          $${gTot.spend.toFixed(2)} / ${gTot.leads} leads ` +
+      `(drift vs main: $${geoDrift.toFixed(2)}, ${gTot.leads - tot[PRIMARY_LEAD_TYPE === 'lead' ? 'lead' : 'pixel']} leads)`,
+  )
+  if (tot.spend > 0 && geoDrift / tot.spend > 0.01) {
+    throw new Error(
+      `country spend $${gTot.spend.toFixed(2)} differs from account spend $${tot.spend.toFixed(2)} by more than 1% — breakdown pass is incomplete`,
     )
   }
   if (videoNodeBlocked) {

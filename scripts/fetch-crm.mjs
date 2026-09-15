@@ -34,6 +34,7 @@ import { existsSync } from 'node:fs'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isoFromCrm, ruFromIso } from './countries.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -204,6 +205,24 @@ function makeUnmatched() {
   }
 }
 
+/**
+ * The CRM's country label → the key the geo table joins on.
+ *
+ * Meta reports ISO codes, the CRM writes English CLDR names, so everything is
+ * keyed by ISO. A label that resolves to nothing keeps its raw text as its own
+ * key: it then shows up as a country with no spend at the bottom of the table,
+ * which is visible, instead of being dropped, which is not. `unknown` collects
+ * those labels so the run can say so out loud.
+ */
+function geoKey(raw, unknown) {
+  const name = String(raw || '').trim()
+  if (!name || name === '—') return null
+  const iso = isoFromCrm(name)
+  if (iso) return iso
+  unknown.add(name)
+  return name
+}
+
 const noteExample = (unmatched, bucket, value) => {
   const arr = (unmatched.examples[bucket] ||= [])
   if (value && arr.length < 5 && !arr.includes(value)) arr.push(value)
@@ -358,7 +377,10 @@ async function loadDeployedBaseline() {
 export function splitLayers(crm) {
   if (!crm) return { base: null, stg: null }
   const daily = crm.daily || []
-  const geo = crm.geo || []
+  // A baseline published before geography was keyed by ISO carries the CRM's raw
+  // English labels. Re-keying on read means a frozen layer still joins onto Meta
+  // spend instead of showing up as a country nobody advertised in.
+  const geo = (crm.geo || []).map((r) => ({ ...r, country: isoFromCrm(r.country) || r.country }))
   const base = {
     fetched_at: crm.fetched_at,
     rows_total: crm.rows_total,
@@ -513,7 +535,8 @@ export function readBaseLayer(body, lookups, MIN, MAX) {
   const unmatched = makeUnmatched()
   const daily = new Map() // `${date}|${campaign_id}|${ad_key}` -> leads
   const status = new Map() // `${date}|${campaign_id}|${status}` -> n
-  const geo = new Map() // `${date}|${campaign_id}|${country}` -> leads
+  const geo = new Map() // `${date}|${campaign_id}|${iso}` -> leads
+  const unknownGeo = new Set()
   let inWindow = 0
   let matched = 0
   let legacyQual = 0 // column F, kept as a cross-check against the funnel tab
@@ -545,8 +568,8 @@ export function readBaseLayer(body, lookups, MIN, MAX) {
       status.set(sk, (status.get(sk) || 0) + 1)
     }
 
-    const country = cell(r, COL.country)
-    if (country && country !== '—') {
+    const country = geoKey(cell(r, COL.country), unknownGeo)
+    if (country) {
       const gk = `${iso}|${j.camp.id}|${country}`
       geo.set(gk, (geo.get(gk) || 0) + 1)
     }
@@ -571,6 +594,7 @@ export function readBaseLayer(body, lookups, MIN, MAX) {
       const [date, campaign_id, country] = k.split('|')
       return { date, campaign_id, country, leads }
     }),
+    unknown_geo: [...unknownGeo],
   }
 }
 
@@ -601,7 +625,8 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
   unmatched.bad_stage_date = 0
 
   const daily = new Map() // `${lead_date}|${campaign_id}|${ad_key}` -> qual
-  const geo = new Map() // `${lead_date}|${campaign_id}|${country}` -> qual
+  const geo = new Map() // `${lead_date}|${campaign_id}|${iso}` -> qual
+  const unknownGeo = new Set()
   const stageAgg = new Map() // `${stage}|${lead}|${event}|${campaign}|${ad}` -> n
   const lostAgg = new Map() // `${lead}|${event}|${campaign}|${ad}` -> n
   let inWindow = 0
@@ -627,8 +652,8 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
     const dk = `${iso}|${j.camp.id}|${adKey}`
     daily.set(dk, (daily.get(dk) || 0) + 1)
 
-    const country = cell(r, col.country)
-    if (country && country !== '—') {
+    const country = geoKey(cell(r, col.country), unknownGeo)
+    if (country) {
       const gk = `${iso}|${j.camp.id}|${country}`
       geo.set(gk, (geo.get(gk) || 0) + 1)
     }
@@ -689,6 +714,7 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
       const [date, campaign_id, country] = k.split('|')
       return { date, campaign_id, country, qual }
     }),
+    unknown_geo: [...unknownGeo],
     stage_defs: stages.map((s, i) => ({ key: s.key, depth: i })),
     stages: [...stageAgg.entries()].map(unpackStage).sort((a, b) => (a.lead_date < b.lead_date ? -1 : 1)),
     lost: [...lostAgg.entries()]
@@ -894,6 +920,19 @@ async function main() {
   // the dashboard never looks fine while half of it is frozen.
   crm.health = crm.health_sources.client_data.ok ? crm.health_sources.stages : crm.health_sources.client_data
   ds.crm = crm
+
+  // Meta only named the countries it delivered to. The CRM knows a few more —
+  // someone clicked while abroad — and those rows would otherwise render as a
+  // bare ISO code.
+  ds.country_names = { ...(ds.country_names || {}) }
+  for (const r of crm.geo) if (!ds.country_names[r.country]) ds.country_names[r.country] = ruFromIso(r.country)
+
+  const unknownGeo = [...new Set([...(useBase.unknown_geo || []), ...(useStg?.unknown_geo || [])])]
+  if (unknownGeo.length) {
+    console.warn(
+      `⚠ ${unknownGeo.length} \u043d\u0435\u0440\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u043d\u043d\u044b\u0445 \u0441\u0442\u0440\u0430\u043d\u044b \u0432 CRM (\u043f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043a\u0430\u043a \u0435\u0441\u0442\u044c, \u0431\u0435\u0437 \u0440\u0430\u0441\u0445\u043e\u0434\u0430): ${unknownGeo.join(', ')}`,
+    )
+  }
 
   // ---- cross-check -----------------------------------------------------------
   const stageTotals = new Map()

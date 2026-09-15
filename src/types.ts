@@ -88,10 +88,13 @@ export interface CrmStatusRow {
 export interface CrmGeoRow {
   date: string
   campaign_id: string
-  country: string
+  country: string // ISO-3166-1 alpha-2, mapped from the CRM's English label
   leads: number
   qual: number
 }
+
+/** [date, campaign_id, country_index, spend, impressions, clicks, leads] */
+export type GeoDailyRow = [string, string, number, number, number, number, number]
 
 /** One funnel stage, in the order the columns appear on the «История статусов» tab. */
 export interface CrmStageDef {
@@ -219,6 +222,15 @@ export interface Dataset {
    * existing date/language filters apply unchanged.
    */
   placement_daily?: PlacementRow[]
+  /** Dictionary for `geo_daily`; index into this array is the country id. */
+  geo_countries?: string[] // absent on datasets built before the country pass
+  /**
+   * Real per-country spend and leads from Meta — `breakdowns=country`, never a
+   * proportional spread. Positional for the same reason as `placement_daily`:
+   * the object form of these rows outweighs the rest of the dataset.
+   */
+  geo_daily?: GeoDailyRow[]
+  country_names?: Record<string, string> // ISO code -> Russian name
   crm?: Crm // absent if the CRM step was skipped
 }
 

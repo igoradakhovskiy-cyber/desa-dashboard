@@ -219,13 +219,13 @@ console.log('\n── разбор задеплоенного блока на с
       { date: '2026-06-11', campaign_id: 'c1', ad_key: null, leads: 2 },
     ],
     status: [{ date: '2026-06-10', campaign_id: 'c1', status: '04.Replied', n: 3 }],
-    geo: [{ date: '2026-06-10', campaign_id: 'c1', country: 'Serbia', leads: 5 }],
+    geo: [{ date: '2026-06-10', campaign_id: 'c1', country: 'RS', leads: 5 }],
   }
   const stgL = {
     fetched_at: 'S', rows_total: 9, rows_in_window: 4, rows_matched: 3, unmatched: { macro: 1 },
     qual_total: 3,
     daily: [{ date: '2026-06-10', campaign_id: 'c1', ad_key: 'Ad1', qual: 3 }],
-    geo: [{ date: '2026-06-10', campaign_id: 'c1', country: 'Serbia', qual: 3 }],
+    geo: [{ date: '2026-06-10', campaign_id: 'c1', country: 'RS', qual: 3 }],
     stage_defs: [{ key: '05.Qualified', depth: 0 }, { key: '06.Meeting Set', depth: 1 }],
     stages: [
       { stage: '05.Qualified', lead_date: '2026-06-10', event_date: '2026-06-10', campaign_id: 'c1', ad_key: 'Ad1', n: 3 },
@@ -251,6 +251,18 @@ console.log('\n── разбор задеплоенного блока на с
   // Датасет, опубликованный до появления слоя этапов: замораживать нечего.
   const legacy = { ...published, stages: undefined }
   check('старый датасет без этапов не притворяется слоем', splitLayers(legacy).stg, null)
+
+  // Блок, опубликованный до перехода географии на ISO, несёт английские названия.
+  // Если разбор оставит их как есть, замороженный слой перестанет сходиться с
+  // расходом из Meta и страна уедет вниз, в список «рекламу там не показывали».
+  const preIso = {
+    ...published,
+    geo: [{ date: '2026-06-10', campaign_id: 'c1', country: 'Serbia', leads: 5, qual: 3 }],
+  }
+  const migrated = splitLayers(preIso)
+  check('старые английские названия стран переводятся в ISO', migrated.base.geo[0].country, 'RS')
+  check('и в слое этапов тоже', migrated.stg.geo[0].country, 'RS')
+  check('ISO-код повторный разбор не портит', splitLayers(published).base.geo[0].country, 'RS')
 }
 
 console.log(failed ? `\n✖ провалено проверок: ${failed}\n` : '\n✔ все проверки прошли\n')
