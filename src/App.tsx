@@ -27,6 +27,23 @@ import CreativeGallery from './components/CreativeGallery'
 const PROJECT = 'Desa Harmonis 2'
 const PW_KEY = 'desa_pw'
 
+// Storage can throw (private mode, blocked site data) — never let that break the gate.
+function readPw(store: Storage): string | null {
+  try {
+    return store.getItem(PW_KEY)
+  } catch {
+    return null
+  }
+}
+function writePw(store: Storage, pw: string | null) {
+  try {
+    if (pw) store.setItem(PW_KEY, pw)
+    else store.removeItem(PW_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function App() {
   const [enc, setEnc] = useState<EncBlob | null>(null)
   const [ds, setDs] = useState<Dataset | null>(null)
@@ -47,25 +64,29 @@ export default function App() {
       .catch((e) => setErr(e.message))
   }, [])
 
-  // auto-unlock within a session
+  // auto-unlock: remembered on this computer (localStorage) or within the tab session
   useEffect(() => {
     if (!enc) return
-    const saved = sessionStorage.getItem(PW_KEY)
-    if (saved) unlock(saved, true)
+    const saved = readPw(localStorage) ?? readPw(sessionStorage)
+    if (saved) unlock(saved, true, !!readPw(localStorage))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enc])
 
-  async function unlock(pw: string, silent = false): Promise<boolean> {
+  async function unlock(pw: string, silent = false, remember = false): Promise<boolean> {
     if (!enc) return false
     try {
       const d = await decryptDataset(enc, pw)
       setDs(d)
       setFilters({ from: d.date_min, to: d.date_max, lang: 'all' })
-      sessionStorage.setItem(PW_KEY, pw)
+      writePw(sessionStorage, pw)
+      if (remember) writePw(localStorage, pw)
+      else writePw(localStorage, null)
       setGateErr(null)
       return true
     } catch {
-      sessionStorage.removeItem(PW_KEY)
+      // a stale saved password (e.g. after a password change) is dropped from both stores
+      writePw(sessionStorage, null)
+      writePw(localStorage, null)
       if (!silent) setGateErr('Неверный пароль')
       return false
     }
@@ -85,7 +106,7 @@ export default function App() {
   if (err) return <CenterMsg title="Ошибка загрузки" body={err} />
   if (!enc) return <CenterMsg title="Загрузка…" body="" spinner />
   if (!ds || !idx || !filters)
-    return <PasswordGate project={PROJECT} error={gateErr} onSubmit={(pw) => unlock(pw)} />
+    return <PasswordGate project={PROJECT} error={gateErr} onSubmit={(pw, remember) => unlock(pw, false, remember)} />
 
   const presets = buildPresets(ds.date_min, ds.date_max)
 

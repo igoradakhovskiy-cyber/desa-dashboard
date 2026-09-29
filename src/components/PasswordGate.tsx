@@ -7,16 +7,17 @@ export default function PasswordGate({
 }: {
   project: string
   error: string | null
-  onSubmit: (pw: string) => Promise<boolean>
+  onSubmit: (pw: string, remember: boolean) => Promise<boolean>
 }) {
   const [pw, setPw] = useState('')
+  const [remember, setRemember] = useState(false)
   const [busy, setBusy] = useState(false)
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!pw || busy) return
     setBusy(true)
-    await onSubmit(pw)
+    await onSubmit(pw, remember)
     setBusy(false)
   }
 
@@ -37,6 +38,15 @@ export default function PasswordGate({
           placeholder="Пароль"
           className="mt-5 w-full rounded-lg bg-card2 border border-line px-3 py-2.5 text-center text-ink outline-none focus:border-[#4a92e0]"
         />
+        <label className="mt-3 flex cursor-pointer select-none items-center justify-center gap-2 text-sm text-mute">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            className="h-4 w-4 accent-[#4a92e0]"
+          />
+          Запомнить на этом компьютере
+        </label>
         {error && <div className="mt-2 text-sm text-[#e2683c]">{error}</div>}
         <button
           type="submit"
