@@ -11,9 +11,19 @@ import {
   type Filters,
   type Index,
 } from '../lib/data'
-import { Card, SectionTitle, LangBadge } from './ui'
+import { Card, SectionTitle, LangBadge, InfoDot } from './ui'
 import { int, money, moneySmart, pct } from '../lib/format'
-import { assetUrl, COLORS, langColor, stageColor, stageShort } from '../config'
+import {
+  assetUrl,
+  COLORS,
+  langColor,
+  stageColor,
+  stageShort,
+  WHATSAPP_COLOR,
+  WHATSAPP_HINT,
+  WHATSAPP_ID,
+  WHATSAPP_LABEL,
+} from '../config'
 
 interface Group {
   id: string
@@ -45,6 +55,7 @@ function Cells({
   stages,
   stageBucket,
   stageCount,
+  noSpend = false,
 }: {
   m: Metrics
   crm?: CrmBucket
@@ -52,12 +63,15 @@ function Cells({
   stages: CrmStageDef[]
   stageBucket: StageBucket
   stageCount: number
+  /** A CRM-only row (WhatsApp): no Meta money, so every cost column is a dash. */
+  noSpend?: boolean
 }) {
+  const dash = <span className="text-dim">—</span>
   return (
     <div className="flex items-center gap-2 tabular text-sm shrink-0">
-      <span className="w-20 sm:w-24 text-right text-ink font-medium">{money(m.spend)}</span>
-      <span className="w-12 text-right text-ink">{int(m.leads)}</span>
-      <span className="w-16 text-right text-mute">{moneySmart(m.cpl)}</span>
+      <span className="w-20 sm:w-24 text-right text-ink font-medium">{noSpend ? dash : money(m.spend)}</span>
+      <span className="w-12 text-right text-ink">{noSpend ? dash : int(m.leads)}</span>
+      <span className="w-16 text-right text-mute">{noSpend ? dash : moneySmart(m.cpl)}</span>
       {hasCrm && (
         <span
           className="w-12 text-right font-medium"
@@ -68,7 +82,7 @@ function Cells({
       )}
       {hasCrm && (
         <span className="hidden sm:inline w-16 text-right text-mute">
-          {crm?.qual ? moneySmart(m.spend / crm.qual) : '—'}
+          {crm?.qual && !noSpend ? moneySmart(m.spend / crm.qual) : '—'}
         </span>
       )}
       {stages.map((d) => {
@@ -81,11 +95,11 @@ function Cells({
             >
               {stageBucket ? int(n) : '—'}
             </span>
-            <span className="text-xs text-dim">{n ? moneySmart(m.spend / n) : ''}</span>
+            <span className="text-xs text-dim">{n && !noSpend ? moneySmart(m.spend / n) : ''}</span>
           </span>
         )
       })}
-      <span className="hidden sm:inline w-14 text-right text-dim">{pct(m.ctr)}</span>
+      <span className="hidden sm:inline w-14 text-right text-dim">{noSpend ? '—' : pct(m.ctr)}</span>
     </div>
   )
 }
@@ -122,6 +136,7 @@ export default function Campaigns({
   const camps = rankGroups(rows, (r) => idx.adById.get(r.ad_id)?.campaign_id)
   const maxSpend = Math.max(1, ...camps.map((c) => c.m.spend))
   const hasCrm = !!crmRows
+  const noMetrics = aggregate([])
 
   const stages = deepStages(ds, idx, filters, basis)
   const stageCount = ds.crm?.stage_defs?.length || 1
@@ -225,6 +240,27 @@ export default function Campaigns({
               </div>
             )
           })}
+          {/* Quals with no UTM: paid traffic that wrote to WhatsApp from the site. No
+              spend of its own, so it sits below the spend-ranked campaigns. */}
+          {(byCamp.get(WHATSAPP_ID)?.qual || stageByCamp.get(WHATSAPP_ID)) && (
+            <div className="relative flex items-center gap-3 px-2.5 py-2.5">
+              <span className="w-3" />
+              <div className="min-w-0 flex-1 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full shrink-0" style={{ background: WHATSAPP_COLOR }} />
+                <span className="truncate text-sm text-ink font-medium">{WHATSAPP_LABEL}</span>
+                <InfoDot text={WHATSAPP_HINT} />
+              </div>
+              <Cells
+                m={noMetrics}
+                crm={byCamp.get(WHATSAPP_ID)}
+                hasCrm={hasCrm}
+                stages={stages}
+                stageBucket={stageByCamp.get(WHATSAPP_ID) || emptyStages}
+                stageCount={stageCount}
+                noSpend
+              />
+            </div>
+          )}
           {camps.length === 0 && (
             <div className="py-6 text-center text-dim text-sm">Нет данных за выбранный период</div>
           )}

@@ -29,6 +29,19 @@ export const langColor = (lang: string) =>
 export const assetUrl = (p?: string | null) => (p ? import.meta.env.BASE_URL + p : '')
 export const LANG_LABEL: Record<string, string> = { ru: 'RU', en: 'EN', de: 'DE', all: 'Все' }
 
+/**
+ * Pseudo-campaign for quals with no UTM at all (scripts/fetch-crm.mjs, WHATSAPP_ID):
+ * the visitor came from the ad and wrote to WhatsApp from the site instead of
+ * filling in the form. Paid quals with no campaign, creative or language.
+ */
+export const WHATSAPP_ID = 'whatsapp'
+export const WHATSAPP_LABEL = 'WhatsApp (без UTM)'
+export const WHATSAPP_COLOR = '#25d366'
+export const WHATSAPP_HINT =
+  'Квалы без UTM: человек пришёл на сайт с рекламы и сразу написал в WhatsApp, минуя форму. ' +
+  'Других источников трафика у сайта нет, поэтому это квалы с рекламы — они входят в общий итог ' +
+  'и CPQL. Своего расхода у строки нет: к кампании и креативу их не привязать.'
+
 export const GEO_HINT =
   'Расход и лиды — из Meta, по стране показа объявления. Квалы — из CRM, по стране в карточке сделки. ' +
   'Это две разные географии: обычно они сходятся, но лид мог кликнуть из поездки. ' +
@@ -39,6 +52,9 @@ export const LEAD_HINT = 'Лид = событие «lead» из Meta (совпа
 export const QUAL_HINT =
   'Квал-лид = строка на листе «История статусов» выгрузки CRM: на этом листе лежат только квалы, ' +
   'поэтому квал определяется наличием сделки, а не значением ячейки.\n\n' +
+  'Квалы без UTM тоже здесь: человек пришёл на сайт с рекламы и сразу написал в WhatsApp. ' +
+  'Они входят в итог и в CPQL, но к кампании и креативу не привязаны — в таблице кампаний это ' +
+  'отдельная строка «WhatsApp». Язык у них неизвестен, поэтому при фильтре EN / DE / RU их не видно.\n\n' +
   'Эта цифра всегда считается по дате создания лида — переключатель «по дате заявки / по дате этапа» ' +
   'под воронкой на неё не влияет. Поэтому за последние дни она ещё дорастёт, а в режиме «по дате ' +
   'этапа» может не сойтись с первой строкой воронки.'

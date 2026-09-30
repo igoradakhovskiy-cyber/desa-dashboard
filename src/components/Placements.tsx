@@ -218,6 +218,13 @@ export default function Placements({
                 удалось — их объявления не давали лидов в этом периоде.
               </>
             )}
+            {table.qual_whatsapp > 0 && (
+              <>
+                {' '}
+                Ещё {int(table.qual_whatsapp)} квал(ов) пришли через WhatsApp без UTM — объявление, а
+                значит и плейсмент, у них неизвестны.
+              </>
+            )}
           </p>
         )}
       </Card>

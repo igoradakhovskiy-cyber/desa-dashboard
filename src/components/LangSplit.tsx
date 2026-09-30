@@ -1,9 +1,9 @@
 import type { CrmDaily, DailyRow, Metrics } from '../types'
 import type { Index } from '../lib/data'
 import { splitByLang } from '../lib/data'
-import { Card, SectionTitle } from './ui'
+import { Card, InfoDot, SectionTitle } from './ui'
 import { int, money, moneySmart, pct } from '../lib/format'
-import { COLORS, LANG_LABEL, langColor } from '../config'
+import { COLORS, LANG_LABEL, langColor, WHATSAPP_COLOR, WHATSAPP_HINT, WHATSAPP_ID } from '../config'
 
 export default function LangSplit({
   rows,
@@ -19,6 +19,9 @@ export default function LangSplit({
   const split = splitByLang(rows, idx, crmRows)
   const totalSpend = total.spend || 1
   const hasCrm = !!crmRows
+  // WhatsApp quals have no campaign, hence no language — without their own row the
+  // language quals would not add up to the total on the KPI tile.
+  const waQual = (crmRows || []).reduce((s, r) => s + (r.campaign_id === WHATSAPP_ID ? r.qual : 0), 0)
 
   return (
     <Card className="p-5">
@@ -85,6 +88,26 @@ export default function LangSplit({
                 <td className="py-2 text-right tabular text-mute pr-1">{pct(s.metrics.ctr)}</td>
               </tr>
             ))}
+            {hasCrm && waQual > 0 && (
+              <tr className="border-t border-line2">
+                <td className="py-2 pl-1">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: WHATSAPP_COLOR }} />
+                    <span className="font-medium text-ink">WhatsApp</span>
+                    <InfoDot text={WHATSAPP_HINT} />
+                  </span>
+                </td>
+                <td className="py-2 text-right tabular text-dim">—</td>
+                <td className="py-2 text-right tabular text-dim">—</td>
+                <td className="py-2 text-right tabular text-dim">—</td>
+                <td className="py-2 text-right tabular text-dim">—</td>
+                <td className="py-2 text-right tabular font-medium" style={{ color: COLORS.qual }}>
+                  {int(waQual)}
+                </td>
+                <td className="py-2 text-right tabular text-dim">—</td>
+                <td className="py-2 text-right tabular text-dim pr-1">—</td>
+              </tr>
+            )}
             {split.length === 0 && (
               <tr>
                 <td colSpan={hasCrm ? 8 : 6} className="py-4 text-center text-dim">

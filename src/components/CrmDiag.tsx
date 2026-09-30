@@ -38,14 +38,14 @@ export default function CrmDiag({ ds }: { ds: Dataset }) {
   ].filter((r) => r.n > 0)
 
   // Reasons a QUAL failed to join. Different list from the one above on purpose:
-  // the funnel tab holds only quals, so "came in without UTM" here means an organic
-  // qual — a fact about the business, not a defect in the join.
+  // the funnel tab holds only quals, and "came in without UTM" there is the site's
+  // WhatsApp button — counted as a qual, just not tied to a campaign.
   const hu = c.hist_unmatched
   const histReasons: { label: string; n: number; note: string }[] = [
     {
-      label: 'квал не из рекламы',
+      label: 'квал через WhatsApp, без UTM',
       n: hu?.no_utm || 0,
-      note: 'WhatsApp, прямой заход, рекомендация — в цене этапов не участвует',
+      note: 'пришёл с рекламы и написал в WhatsApp с сайта — засчитан в квалы и CPQL отдельной строкой «WhatsApp», к кампании и креативу не привязан',
     },
     {
       label: 'кампания вне периода дашборда',
@@ -119,7 +119,9 @@ export default function CrmDiag({ ds }: { ds: Dataset }) {
                 Воронка и квалы — лист <span className="text-ink">{c.hist_tab}</span>:{' '}
                 <span className="tabular text-ink font-medium">{int(c.hist_rows_matched)}</span> из{' '}
                 <span className="tabular">{int(c.hist_rows_in_window)}</span> квалов в периоде
-                сопоставлено с рекламой (всего на листе {int(c.hist_rows_total)}).
+                сопоставлено с рекламой по UTM
+                {c.qual_whatsapp ? `, ещё ${int(c.qual_whatsapp)} — через WhatsApp` : ''} (всего на
+                листе {int(c.hist_rows_total)}).
               </div>
               {histReasons.map((r) => (
                 <div key={r.label} className="flex items-start gap-3">

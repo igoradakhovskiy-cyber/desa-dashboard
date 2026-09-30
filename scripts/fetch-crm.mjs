@@ -171,6 +171,18 @@ const PLACEHOLDER = new Set(['—', '–', '-', '', 'n/a', 'null', 'undefined'])
 const utm = (s) => (PLACEHOLDER.has(norm(s)) ? '' : String(s).trim())
 
 /**
+ * Pseudo-campaign for quals that reach «История статусов» with no UTM at all.
+ *
+ * On this project that is the WhatsApp button on the site: the visitor came from
+ * the ad, skipped the form and wrote straight to WhatsApp, so the deal carries no
+ * UTM. The site has no traffic source other than these ads, so these are paid
+ * quals — they count toward the qual total and CPQL, they just cannot be pinned to
+ * a campaign or a creative. Only the funnel tab needs this: client_data has no
+ * UTM-less rows in the window, the site form always stamps them.
+ */
+export const WHATSAPP_ID = 'whatsapp'
+
+/**
  * An unsubstituted macro, in either dialect: Meta's own `{{campaign.name}}` and
  * the single-brace `{utm_campaign}` that a broken link template leaves behind.
  */
@@ -405,6 +417,7 @@ export function splitLayers(crm) {
         rows_matched: crm.hist_rows_matched,
         unmatched: crm.hist_unmatched || makeUnmatched(),
         qual_total: crm.qual_total,
+        qual_whatsapp: crm.qual_whatsapp ?? 0,
         daily: daily
           .filter((r) => r.qual)
           .map(({ date, campaign_id, ad_key, qual }) => ({ date, campaign_id, ad_key, qual })),
@@ -504,7 +517,7 @@ function joinRow({ iso, rawCamp, rawAd, lookups, unmatched, MIN, MAX }) {
   }
   if (!rawCamp && !rawAd) {
     unmatched.no_utm++
-    return { inWindow: true, camp: null }
+    return { inWindow: true, camp: null, noUtm: true }
   }
   if (MACRO_RE.test(rawCamp) || MACRO_RE.test(rawAd)) {
     unmatched.macro++
@@ -630,7 +643,8 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
   const stageAgg = new Map() // `${stage}|${lead}|${event}|${campaign}|${ad}` -> n
   const lostAgg = new Map() // `${lead}|${event}|${campaign}|${ad}` -> n
   let inWindow = 0
-  let matched = 0
+  let matched = 0 // joined by UTM — what the join-rate guard measures
+  let whatsapp = 0 // no UTM at all, see WHATSAPP_ID
 
   for (const r of body) {
     const iso = toIso(cell(r, col.date))
@@ -645,16 +659,18 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
     })
     if (!j) continue
     inWindow++
-    if (!j.camp) continue
+    const campId = j.camp ? j.camp.id : j.noUtm ? WHATSAPP_ID : null
+    if (!campId) continue
 
-    matched++
+    if (j.camp) matched++
+    else whatsapp++
     const adKey = j.adKey || ''
-    const dk = `${iso}|${j.camp.id}|${adKey}`
+    const dk = `${iso}|${campId}|${adKey}`
     daily.set(dk, (daily.get(dk) || 0) + 1)
 
     const country = geoKey(cell(r, col.country), unknownGeo)
     if (country) {
-      const gk = `${iso}|${j.camp.id}|${country}`
+      const gk = `${iso}|${campId}|${country}`
       geo.set(gk, (geo.get(gk) || 0) + 1)
     }
 
@@ -682,14 +698,14 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
 
     for (let i = 0; i < stages.length; i++) {
       if (!reached[i]) continue
-      const k = `${stages[i].key}|${iso}|${eventAt[i]}|${j.camp.id}|${adKey}`
+      const k = `${stages[i].key}|${iso}|${eventAt[i]}|${campId}|${adKey}`
       stageAgg.set(k, (stageAgg.get(k) || 0) + 1)
     }
 
     const lostRaw = cell(r, col.lost)
     if (lostRaw) {
       const lostIso = toIso(lostRaw) || iso
-      const lk = `${iso}|${lostIso}|${j.camp.id}|${adKey}`
+      const lk = `${iso}|${lostIso}|${campId}|${adKey}`
       lostAgg.set(lk, (lostAgg.get(lk) || 0) + 1)
     }
   }
@@ -704,7 +720,8 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
     rows_total: body.length,
     rows_in_window: inWindow,
     rows_matched: matched,
-    qual_total: matched,
+    qual_total: matched + whatsapp,
+    qual_whatsapp: whatsapp,
     unmatched,
     daily: [...daily.entries()].map(([k, qual]) => {
       const [date, campaign_id, ad_key] = k.split('|')
@@ -755,7 +772,8 @@ export function mergeLayers(base, stg) {
     // A qual with no matching client_data bucket: the funnel tab already knows
     // about a lead the lead tab has not caught up with. Counted, never dropped —
     // otherwise the qual would silently disappear from every breakdown.
-    if (!daily.has(k)) qualOnly += r.qual
+    // WhatsApp quals never had a form lead to begin with, so they are not "ahead".
+    if (!daily.has(k) && r.campaign_id !== WHATSAPP_ID) qualOnly += r.qual
     put(daily, k, 'qual', r.qual, dailyInit)
   }
   for (const r of stg?.geo || []) {
@@ -780,6 +798,7 @@ export function mergeLayers(base, stg) {
     hist_rows_matched: stg?.rows_matched ?? 0,
     hist_unmatched: histUnmatched,
     qual_total: stg?.qual_total ?? 0,
+    qual_whatsapp: stg?.qual_whatsapp ?? 0,
     daily: [...daily.entries()]
       .map(([k, v]) => {
         const [date, campaign_id, ad_key] = k.split('|')
@@ -943,7 +962,8 @@ async function main() {
     `(${baseRate.toFixed(1)}% of ${metaLeads} Meta leads)`)
   console.log(`  ${HIST_TAB}: ${stg.rows_in_window} in window, ${stg.rows_matched} matched ` +
     `(${histRate.toFixed(1)}% of ${histJoinable} с UTM)`)
-  console.log(`  qualified         ${crm.qual_total}  ·  колонка F на "${SHEET_TAB}" даёт ${base.legacy_qual}`)
+  console.log(`  qualified         ${crm.qual_total} (из них WhatsApp без UTM: ${crm.qual_whatsapp})  ·  ` +
+    `колонка F на "${SHEET_TAB}" даёт ${base.legacy_qual}`)
   if (crm.hist_unmatched.qual_only_in_history) {
     console.log(`  quals без строки в "${SHEET_TAB}": ${crm.hist_unmatched.qual_only_in_history}`)
   }
@@ -961,7 +981,7 @@ async function main() {
   )
   console.log(
     `                    "${HIST_TAB}": macro ${stg.unmatched.macro} · unknown campaign ` +
-      `${stg.unmatched.unknown_campaign} · unknown ad ${stg.unmatched.unknown_ad} · no utm ${stg.unmatched.no_utm} · ` +
+      `${stg.unmatched.unknown_campaign} · unknown ad ${stg.unmatched.unknown_ad} · no utm → WhatsApp ${stg.unmatched.no_utm} · ` +
       `битых дат этапов ${stg.unmatched.bad_stage_date}`,
   )
 
@@ -977,19 +997,27 @@ async function main() {
   // They exist to prove the join and the cumulative rule on the snapshot they
   // were built against. Re-freeze them deliberately, never to "make it pass".
   if (VERIFY) {
+    // The snapshot predates the WhatsApp bucket, so its numbers are UTM-joined
+    // only; WhatsApp quals are checked on their own line below.
     const byCamp = new Map()
     const byAd = new Map()
     for (const r of crm.daily) {
+      if (r.campaign_id === WHATSAPP_ID) continue
       bumpN(byCamp, r.campaign_id, r.leads, r.qual)
       if (r.ad_key) bumpN(byAd, r.ad_key, r.leads, r.qual)
     }
+    const adStageTotals = new Map()
+    for (const r of crm.stages) {
+      if (r.campaign_id !== WHATSAPP_ID) adStageTotals.set(r.stage, (adStageTotals.get(r.stage) || 0) + r.n)
+    }
     const c403 = ds.campaigns.find((c) => c.name.startsWith('403_EN_WW_DESA2'))
     const qualSum = [...byCamp.values()].reduce((s, v) => s + v.qual, 0)
-    const stageOf = (k) => stageTotals.get(k) || 0
+    const stageOf = (k) => adStageTotals.get(k) || 0
     const expect = [
       ['rows in window (client_data)', base.rows_in_window, 288],
       ['rows in window (история)', stg.rows_in_window, 31],
-      ['qualified (matched)', crm.qual_total, 25],
+      ['qualified (matched)', crm.hist_rows_matched, 25],
+      ['WhatsApp quals (no utm)', crm.qual_whatsapp, 4],
       ['quals summed over campaigns', qualSum, 25],
       ['unknown campaign rows (client_data)', base.unmatched.unknown_campaign, 3],
       // Organic quals ("—" in the UTM cells) must stay in `no_utm`. If they drift
@@ -1013,9 +1041,10 @@ async function main() {
       console.log(`  ${ok ? '✔' : '✖'} ${label}: got ${got}, expected ${want}`)
     }
     // The one invariant that must hold on ANY snapshot, not just the frozen one.
+    const allOf = (k) => stageTotals.get(k) || 0
     for (let i = 1; i < crm.stage_defs.length; i++) {
-      const a = stageOf(crm.stage_defs[i - 1].key)
-      const b = stageOf(crm.stage_defs[i].key)
+      const a = allOf(crm.stage_defs[i - 1].key)
+      const b = allOf(crm.stage_defs[i].key)
       if (b > a) {
         failed++
         console.log(`  ✖ воронка не убывает: ${crm.stage_defs[i].key} (${b}) > ${crm.stage_defs[i - 1].key} (${a})`)

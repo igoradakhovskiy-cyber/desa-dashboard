@@ -14,6 +14,7 @@ import type {
   Metrics,
 } from '../types'
 import { LANGS } from '../types'
+import { WHATSAPP_ID } from '../config'
 
 export interface Index {
   adById: Map<string, Ad>
@@ -214,6 +215,8 @@ export interface PlacementTable {
   /** Quals the CRM has but no placement could claim — kept visible so totals reconcile. */
   qual_unattributed: number
   qual_total: number
+  /** WhatsApp quals: no ad, so no placement — reported apart, not as a failed spread. */
+  qual_whatsapp: number
   estimated: boolean
 }
 
@@ -239,7 +242,7 @@ export function placementTable(
   const dict = ds.placements || []
   const rows = ds.placement_daily || []
   if (!dict.length || !rows.length) {
-    return { rows: [], qual_unattributed: 0, qual_total: 0, estimated: false }
+    return { rows: [], qual_unattributed: 0, qual_total: 0, qual_whatsapp: 0, estimated: false }
   }
 
   const agg = new Map<number, { spend: number; impressions: number; clicks: number; leads: number }>()
@@ -274,6 +277,7 @@ export function placementTable(
   const qualByPlacement = new Map<number, number>()
   let qualTotal = 0
   let qualUnattributed = 0
+  let qualWhatsapp = 0
   const hasCrm = !!crmRows
   if (crmRows) {
     for (const [adName, bucket] of crmByAd(crmRows)) {
@@ -288,7 +292,10 @@ export function placementTable(
     // Measured against the raw CRM total, not the crmByAd sum: quals on rows whose ad
     // no longer exists never reach crmByAd at all, and they are just as unplaceable.
     const placed = [...qualByPlacement.values()].reduce((s, v) => s + v, 0)
-    qualTotal = crmRows.reduce((s, r) => s + r.qual, 0)
+    for (const r of crmRows) {
+      if (r.campaign_id === WHATSAPP_ID) qualWhatsapp += r.qual
+      else qualTotal += r.qual
+    }
     qualUnattributed = Math.max(0, qualTotal - placed)
   }
 
@@ -319,6 +326,7 @@ export function placementTable(
     rows: out,
     qual_unattributed: qualUnattributed,
     qual_total: qualTotal,
+    qual_whatsapp: qualWhatsapp,
     estimated: hasCrm,
   }
 }

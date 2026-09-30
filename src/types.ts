@@ -69,7 +69,10 @@ export interface CreativeGroup {
   campaign_ids: string[]
 }
 
-/** One CRM day × campaign × creative bucket. `ad_key` is the ad name (creative key). */
+/**
+ * One CRM day × campaign × creative bucket. `ad_key` is the ad name (creative key).
+ * `campaign_id` may be WHATSAPP_ID — a qual with no UTM at all, see config.ts.
+ */
 export interface CrmDaily {
   date: string
   campaign_id: string
@@ -136,7 +139,7 @@ export interface CrmUnmatched {
   macro: number // Meta never substituted {{campaign.name}} / {{ad.name}}
   unknown_campaign: number // older flight, outside the dashboard window
   unknown_ad: number // campaign matched, ad no longer in the account
-  no_utm: number // organic: WhatsApp, direct, referral — "—" in the UTM cells
+  no_utm: number // "—" in the UTM cells; on the funnel tab these are counted as WhatsApp quals
   bad_date: number
   out_of_window: number
   examples: Record<string, string[]>
@@ -187,7 +190,9 @@ export interface Crm {
   hist_rows_in_window: number
   hist_rows_matched: number
   hist_unmatched: CrmUnmatched
-  qual_total: number
+  qual_total: number // UTM-joined quals + WhatsApp quals
+  /** Quals with no UTM at all — the site's WhatsApp button. Absent on older datasets. */
+  qual_whatsapp?: number
   daily: CrmDaily[]
   status: CrmStatusRow[]
   geo: CrmGeoRow[]

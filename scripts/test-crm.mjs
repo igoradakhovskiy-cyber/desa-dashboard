@@ -13,6 +13,7 @@
  */
 
 import {
+  WHATSAPP_ID,
   diagnose,
   mergeLayers,
   parseCsv,
@@ -64,7 +65,7 @@ const base = {
   'Создана': '10.06.2026', 'Страна': 'Serbia', 'UTM Campaign': 'Camp A', 'UTM Content': 'Ad1',
 }
 
-/** Four quals: one plain, one with a meeting, one that SKIPPED the meeting rung, one organic. */
+/** Four quals: one plain, one with a meeting, one that SKIPPED the meeting rung, one via WhatsApp (no UTM). */
 const ROWS = [
   row({ ...base, '05.Qualified': '10.06.2026' }),
   row({ ...base, '05.Qualified': '10.06.2026', '06.Meeting Set': '12.06.2026' }),
@@ -89,9 +90,16 @@ console.log('\n── базовая раскладка ──')
 {
   const l = read(HEADER, ROWS)
   const t = totals(l)
-  check('квалов сматчено (органика не в счёт)', l.qual_total, 3)
-  check('органика ушла в no_utm', l.unmatched.no_utm, 1)
-  check('05.Qualified', t['05.Qualified'], 3)
+  check('квалы: 3 по UTM + 1 WhatsApp', l.qual_total, 4)
+  check('сматчено по UTM — без WhatsApp', l.rows_matched, 3)
+  check('без UTM учтено в no_utm', l.unmatched.no_utm, 1)
+  check('и засчитано в WhatsApp', l.qual_whatsapp, 1)
+  const wa = l.daily.filter((r) => r.campaign_id === WHATSAPP_ID)
+  check('WhatsApp-квал лежит под своей псевдокампанией без креатива', wa, [
+    { date: '2026-06-10', campaign_id: WHATSAPP_ID, ad_key: null, qual: 1 },
+  ])
+  check('и в гео тоже', l.geo.filter((r) => r.campaign_id === WHATSAPP_ID).length, 1)
+  check('05.Qualified', t['05.Qualified'], 4)
   // 1 стоит дата в 06 + 1 перескочивший сразу в 07 = 2
   check('06.Meeting Set засчитан кумулятивно', t['06.Meeting Set'], 2)
   check('07.Online Meeting', t['07.Online Meeting'], 1)
@@ -114,7 +122,7 @@ console.log('\n── вставили колонку в середину ──
   const before = totals(read(HEADER, ROWS))
   const after = read(hdr, rows)
   check('цифры не поехали', totals(after), before)
-  check('квалы на месте', after.qual_total, 3)
+  check('квалы на месте', after.qual_total, 4)
 }
 
 console.log('\n── добавили новый этап в конец воронки ──')
@@ -143,7 +151,7 @@ console.log('\n── в ячейке этапа текст вместо дат�
   check('замечено и посчитано', l.unmatched.bad_stage_date, 1)
   check('этап не засчитан', t['07.Online Meeting'], 1)
   check('сделка осталась на предыдущем этапе', t['06.Meeting Set'], 2)
-  check('и из квалов не пропала', l.qual_total, 3)
+  check('и из квалов не пропала', l.qual_total, 4)
 }
 
 console.log('\n── удалили обязательную колонку ──')
@@ -205,6 +213,17 @@ console.log('\n── квал есть, а лида в client_data ещё не�
   check('квал не потерян', m.daily.reduce((s, r) => s + r.qual, 0), 2)
   check('и отмечен как опередивший', m.hist_unmatched.qual_only_in_history, 1)
   check('лиды не задвоились', m.daily.reduce((s, r) => s + r.leads, 0), 1)
+
+  // У WhatsApp-квала формы не было вовсе — «опередившим» он не считается.
+  const withWa = mergeLayers(baseLayer, {
+    ...stgLayer,
+    qual_total: 3,
+    qual_whatsapp: 1,
+    daily: [...stgLayer.daily, { date: '2026-06-12', campaign_id: WHATSAPP_ID, ad_key: null, qual: 1 }],
+  })
+  check('WhatsApp-квал в сумме', withWa.daily.reduce((s, r) => s + r.qual, 0), 3)
+  check('и не записан в опередившие', withWa.hist_unmatched.qual_only_in_history, 1)
+  check('счётчик WhatsApp доехал до блока', withWa.qual_whatsapp, 1)
 }
 
 console.log('\n── разбор задеплоенного блока на слои (путь заморозки) ──')
@@ -223,8 +242,12 @@ console.log('\n── разбор задеплоенного блока на с
   }
   const stgL = {
     fetched_at: 'S', rows_total: 9, rows_in_window: 4, rows_matched: 3, unmatched: { macro: 1 },
-    qual_total: 3,
-    daily: [{ date: '2026-06-10', campaign_id: 'c1', ad_key: 'Ad1', qual: 3 }],
+    qual_total: 4,
+    qual_whatsapp: 1,
+    daily: [
+      { date: '2026-06-10', campaign_id: 'c1', ad_key: 'Ad1', qual: 3 },
+      { date: '2026-06-11', campaign_id: WHATSAPP_ID, ad_key: null, qual: 1 },
+    ],
     geo: [{ date: '2026-06-10', campaign_id: 'c1', country: 'RS', qual: 3 }],
     stage_defs: [{ key: '05.Qualified', depth: 0 }, { key: '06.Meeting Set', depth: 1 }],
     stages: [
@@ -245,7 +268,8 @@ console.log('\n── разбор задеплоенного блока на с
   const freshBase = { ...baseL, fetched_at: 'B2', daily: [{ date: '2026-06-10', campaign_id: 'c1', ad_key: 'Ad1', leads: 9 }] }
   const frozen = mergeLayers(freshBase, splitLayers(published).stg)
   check('лиды свежие', frozen.daily.reduce((s, r) => s + r.leads, 0), 9)
-  check('квалы из замороженного слоя', frozen.qual_total, 3)
+  check('квалы из замороженного слоя', frozen.qual_total, 4)
+  check('и WhatsApp в них не потерялся', frozen.qual_whatsapp, 1)
   check('воронка из замороженного слоя', frozen.stages.length, 2)
 
   // Датасет, опубликованный до появления слоя этапов: замораживать нечего.
