@@ -252,11 +252,24 @@ async function resolvePreview(adId) {
  *  1. object_story_spec.video_data.image_url — the creative's own poster, full size
  *     (1080×1920) and readable with plain ads permissions. Works everywhere.
  *  2. the video node — adds a permalink, but needs page access (error #10 without it).
- *  3. creative.thumbnail_url — always present but only a 64×64 crop; last resort.
+ *  3. creative.thumbnail_url requested at 1080×1920 — the only full-size source for
+ *     flexible (asset-feed) ads, whose object_story_spec Meta refuses to read.
+ *  4. creative.thumbnail_url as listed — only a 64×64 crop; last resort.
+ *
+ * object_story_spec is read per creative, not in the bulk /ads call: one flexible ad
+ * makes Meta reject the whole listing with 100/2446211 (dashboard down 15–18.10.2026).
  */
 async function resolveCreative(ad) {
   const cr = ad.creative || {}
-  const vd = (cr.object_story_spec && cr.object_story_spec.video_data) || {}
+  let vd = {}
+  if (cr.id) {
+    try {
+      const spec = await graph(cr.id, { fields: 'object_story_spec{video_data{image_url,image_hash}}' })
+      vd = (spec.object_story_spec && spec.object_story_spec.video_data) || {}
+    } catch {
+      // flexible ad — falls through to the full-size thumbnail
+    }
+  }
   const media = {
     poster: null,
     poster_w: null,
@@ -281,6 +294,21 @@ async function resolveCreative(ad) {
       media.poster_w = v.poster_w
       media.poster_h = v.poster_h
       if (!media.permalink) media.permalink = v.permalink
+    }
+  }
+  if (!media.poster && cr.id) {
+    try {
+      const big = await graph(cr.id, { fields: 'thumbnail_url', thumbnail_width: 1080, thumbnail_height: 1920 })
+      if (big.thumbnail_url) {
+        const dl = await downloadPoster(big.thumbnail_url, `crt_${cr.id}`)
+        if (dl) {
+          media.poster = dl.poster
+          media.poster_w = dl.w
+          media.poster_h = dl.h
+        }
+      }
+    } catch {
+      // keep falling back
     }
   }
   if (!media.poster && (cr.image_url || cr.thumbnail_url)) {
@@ -447,7 +475,7 @@ async function main() {
     graphAll(`${ACCOUNT_ID}/ads`, {
       fields:
         'name,status,adset_id,campaign_id,creative{id,object_type,image_url,thumbnail_url,video_id,' +
-        'instagram_permalink_url,object_story_spec{video_data{image_url,image_hash}}}',
+        'instagram_permalink_url}',
       limit: 500,
     }),
   ])
