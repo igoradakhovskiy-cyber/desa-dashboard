@@ -104,7 +104,21 @@ console.log('\n── базовая раскладка ──')
   check('06.Meeting Set засчитан кумулятивно', t['06.Meeting Set'], 2)
   check('07.Online Meeting', t['07.Online Meeting'], 1)
   check('пустой этап не попал в stages', t['09.on-site Visit'], undefined)
-  check('все 9 этапов объявлены', l.stage_defs.length, 9)
+  check('все 10 этапов объявлены (9 номерных + SUCCESS)', l.stage_defs.length, 10)
+  check('SUCCESS — самый глубокий', l.stage_defs.at(-1).key, 'SUCCESS')
+  check('страна едет в строках этапов', [...new Set(l.stages.map((r) => r.country))], ['RS'])
+}
+
+console.log('\n── сделку закрыли в SUCCESS, пропустив договор ──')
+{
+  const l = read(HEADER, [
+    row({ ...base, 'Страна': 'France', '07.Online Meeting': '15.06.2026', 'SUCCESS': '20.06.2026' }),
+  ])
+  const t = totals(l)
+  check('SUCCESS засчитан', t['SUCCESS'], 1)
+  check('и договор тоже, хоть даты нет', t['12.Contract signed'], 1)
+  check('и бронь', t['10.Booking'], 1)
+  check('страна сделки', l.stages.find((r) => r.stage === 'SUCCESS')?.country, 'FR')
 }
 
 console.log('\n── строки отсортировали ──')
@@ -136,7 +150,8 @@ console.log('\n── добавили новый этап в конец вор�
   const l = read(hdr, rows)
   const t = totals(l)
   check('этап подхватился сам', l.stage_defs.map((d) => d.key).includes('14.Keys Handed Over'), true)
-  check('и он последний по глубине', l.stage_defs.at(-1).key, '14.Keys Handed Over')
+  // sheet order: the new column sits before SUCCESS, so the won deal stays the bottom
+  check('и он глубже всех номерных', l.stage_defs.at(-2).key, '14.Keys Handed Over')
   check('дошедший до него засчитан', t['14.Keys Handed Over'], 1)
   // и он же теперь считается дошедшим до всех этапов выше
   check('и во все этапы выше тоже', t['12.Contract signed'], 1)

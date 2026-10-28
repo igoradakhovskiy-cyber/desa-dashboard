@@ -122,6 +122,8 @@ export interface CrmStageRow {
   event_date: string
   campaign_id: string
   ad_key: string | null
+  /** ISO code, same key as `CrmGeoRow`. Absent on datasets built before 28.10.2026. */
+  country?: string | null
   n: number
 }
 

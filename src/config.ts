@@ -45,7 +45,10 @@ export const WHATSAPP_HINT =
 export const GEO_HINT =
   'Расход и лиды — из Meta, по стране показа объявления. Квалы — из CRM, по стране в карточке сделки. ' +
   'Это две разные географии: обычно они сходятся, но лид мог кликнуть из поездки. ' +
-  'Строки без расхода вынесены вниз отдельно.'
+  'Строки без расхода вынесены вниз отдельно.\n\n' +
+  'Онлайн / Бронь / Договор / Сделка — этапы с листа «История статусов», всегда по дате заявки ' +
+  '(как колонка «Квалы»). Считается «дошло до этапа или дальше», как в воронке продаж: сделка ' +
+  'в SUCCESS засчитывается и в договор, даже если дату договора не проставили.'
 
 // Meta lead action types are consistent for this account (lead == fb_pixel_lead == onsite_web_lead).
 export const LEAD_HINT = 'Лид = событие «lead» из Meta (совпадает с pixel/onsite-лидом)'
@@ -148,6 +151,7 @@ export const STAGE_LABEL: Record<string, string> = {
   '11.Due diligence': 'Due diligence',
   '12.Contract signed': 'Договор подписан',
   '13.Contract Payment Received': 'Оплата получена',
+  SUCCESS: 'Сделка закрыта',
 }
 
 /** Short forms for table headers, where the full label would wreck the layout. */
@@ -161,7 +165,15 @@ export const STAGE_SHORT: Record<string, string> = {
   '11.Due diligence': 'DD',
   '12.Contract signed': 'Договор',
   '13.Contract Payment Received': 'Оплата',
+  SUCCESS: 'Сделка',
 }
+
+/**
+ * Stages the geo table shows as columns — the milestones picked on 28.10.2026,
+ * not the whole ladder: nine more columns would bury the country P&L. Qualified
+ * is already the «Квалы» column.
+ */
+export const GEO_STAGES = ['07.Online Meeting', '10.Booking', '12.Contract signed', 'SUCCESS']
 
 /** Strips the "NN." prefix so an untranslated stage still reads like a name. */
 const rawStageName = (key: string) => key.replace(/^\d{2}\.\s*/, '')

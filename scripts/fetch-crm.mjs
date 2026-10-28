@@ -113,6 +113,12 @@ const HIST_FIELDS = {
  * pipeline, it reaches the dashboard on the next run without a code change.
  */
 const STAGE_RE = /^\d{2}\.\s*\S/
+/**
+ * The won deal. Unnumbered in the sheet, but it IS the bottom of the funnel: sales
+ * stamps it on a closed deal without back-filling 12 and 13, so read it as the
+ * deepest stage and the cumulative rule counts those two as reached too.
+ */
+const STAGE_WON = 'SUCCESS'
 /** Absence of any of these is not "a column was added", it is "the tab moved". */
 const STAGES_REQUIRED = [
   '05.Qualified',
@@ -332,7 +338,7 @@ export function resolveHistColumns(hdr, loud = true) {
   const stages = []
   hdr.forEach((c, i) => {
     const key = String(c).trim()
-    if (i > col.ad && STAGE_RE.test(key)) stages.push({ key, col: i })
+    if (i > col.ad && (STAGE_RE.test(key) || key === STAGE_WON)) stages.push({ key, col: i })
   })
   const absent = STAGES_REQUIRED.filter((k) => !stages.some((s) => s.key === k))
   if (absent.length) {
@@ -640,7 +646,7 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
   const daily = new Map() // `${lead_date}|${campaign_id}|${ad_key}` -> qual
   const geo = new Map() // `${lead_date}|${campaign_id}|${iso}` -> qual
   const unknownGeo = new Set()
-  const stageAgg = new Map() // `${stage}|${lead}|${event}|${campaign}|${ad}` -> n
+  const stageAgg = new Map() // `${stage}|${lead}|${event}|${campaign}|${ad}|${iso}` -> n
   const lostAgg = new Map() // `${lead}|${event}|${campaign}|${ad}` -> n
   let inWindow = 0
   let matched = 0 // joined by UTM — what the join-rate guard measures
@@ -698,7 +704,8 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
 
     for (let i = 0; i < stages.length; i++) {
       if (!reached[i]) continue
-      const k = `${stages[i].key}|${iso}|${eventAt[i]}|${campId}|${adKey}`
+      // country rides along so the geo table can show the funnel per country
+      const k = `${stages[i].key}|${iso}|${eventAt[i]}|${campId}|${adKey}|${country || ''}`
       stageAgg.set(k, (stageAgg.get(k) || 0) + 1)
     }
 
@@ -711,8 +718,8 @@ export function readStageLayer(body, hist, lookups, MIN, MAX) {
   }
 
   const unpackStage = ([k, n]) => {
-    const [stage, lead_date, event_date, campaign_id, ad_key] = k.split('|')
-    return { stage, lead_date, event_date, campaign_id, ad_key: ad_key || null, n }
+    const [stage, lead_date, event_date, campaign_id, ad_key, country] = k.split('|')
+    return { stage, lead_date, event_date, campaign_id, ad_key: ad_key || null, country: country || null, n }
   }
 
   return {

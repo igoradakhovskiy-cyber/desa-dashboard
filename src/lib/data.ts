@@ -467,6 +467,9 @@ export function stageRowsFor(
   })
 }
 
+/** True when the stage rows carry a country — datasets before 28.10.2026 do not. */
+export const hasStageGeo = (ds: Dataset) => !!ds.crm?.stages?.some((r) => 'country' in r)
+
 /** Stages with at least one lead in the current filter — nothing else is worth a column. */
 export function activeStages(ds: Dataset, idx: Index, f: Filters, basis: DateBasis): CrmStageDef[] {
   if (!ds.crm?.stage_defs?.length) return []
@@ -532,6 +535,8 @@ export interface GeoRow {
   qual_rate: number | null
   impressions: number
   clicks: number
+  /** stage key -> quals from this country that reached it or deeper, by lead date. */
+  stages: Map<string, number>
   /** CRM has leads here but Meta never delivered — a different geography, not a gap. */
   no_delivery: boolean
 }
@@ -549,15 +554,30 @@ export interface GeoRow {
  * Spend and Meta leads are real per-country figures from `breakdowns=country`,
  * never a proportional spread, which is what makes CPL and CPQL here usable for
  * moving budget around.
+ *
+ * Stages are filed by lead date regardless of the funnel's basis switch, same as
+ * the «Квалы» column next to them — otherwise one row would mix two cohorts.
  */
 export function geoTable(ds: Dataset, idx: Index, f: Filters): GeoRow[] {
   const rows = new Map<
     string,
-    { spend: number; leads: number; impressions: number; clicks: number; crm_leads: number; qual: number }
+    {
+      spend: number
+      leads: number
+      impressions: number
+      clicks: number
+      crm_leads: number
+      qual: number
+      stages: Map<string, number>
+    }
   >()
   const get = (c: string) => {
     let v = rows.get(c)
-    if (!v) rows.set(c, (v = { spend: 0, leads: 0, impressions: 0, clicks: 0, crm_leads: 0, qual: 0 }))
+    if (!v)
+      rows.set(
+        c,
+        (v = { spend: 0, leads: 0, impressions: 0, clicks: 0, crm_leads: 0, qual: 0, stages: new Map() }),
+      )
     return v
   }
 
@@ -576,6 +596,11 @@ export function geoTable(ds: Dataset, idx: Index, f: Filters): GeoRow[] {
     v.crm_leads += r.leads
     v.qual += r.qual
   }
+  for (const r of ds.crm?.stages || []) {
+    if (!r.country || !stageInScope(r, idx, f, 'lead')) continue
+    const s = get(r.country).stages
+    s.set(r.stage, (s.get(r.stage) || 0) + r.n)
+  }
 
   return [...rows.entries()]
     .map(([country, v]) => ({
@@ -590,6 +615,7 @@ export function geoTable(ds: Dataset, idx: Index, f: Filters): GeoRow[] {
       qual_rate: v.crm_leads ? (v.qual / v.crm_leads) * 100 : null,
       impressions: v.impressions,
       clicks: v.clicks,
+      stages: v.stages,
       no_delivery: v.spend <= 0,
     }))
     .filter((r) => r.spend > 0 || r.crm_leads > 0)

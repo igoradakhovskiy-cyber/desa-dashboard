@@ -1,13 +1,19 @@
 import { useState } from 'react'
 import type { Dataset } from '../types'
 import type { Filters, GeoRow, Index } from '../lib/data'
-import { geoTable } from '../lib/data'
+import { geoTable, hasStageGeo } from '../lib/data'
 import { Card, InfoDot, SectionTitle, Segmented } from './ui'
 import { int, money, moneySmart, pct, plural } from '../lib/format'
-import { COLORS, GEO_HINT } from '../config'
+import { COLORS, GEO_HINT, GEO_STAGES, stageColor, stageLabel, stageShort } from '../config'
 
 const SHOW = 8
 type SortKey = 'spend' | 'qual' | 'cpql'
+
+/** A funnel stage shown as a column: which key, and the colour it has on the ladder. */
+interface StageCol {
+  key: string
+  color: string
+}
 
 /**
  * The full country P&L: what each geo cost and what it actually returned.
@@ -30,6 +36,16 @@ export default function GeoTable({
 
   const rowsAll = geoTable(ds, idx, filters)
 
+  // Only stages the sheet actually has; none at all on a dataset whose stage rows
+  // predate the country field — empty columns there would read as "zero meetings".
+  const defs = ds.crm?.stage_defs || []
+  const stageCols: StageCol[] = hasStageGeo(ds)
+    ? GEO_STAGES.flatMap((key) => {
+        const def = defs.find((d) => d.key === key)
+        return def ? [{ key, color: stageColor(def.depth, defs.length) }] : []
+      })
+    : []
+
   // Countries the CRM knows but Meta never delivered to always sit at the bottom:
   // they have no spend, so every money column would be a lie.
   const delivered = rowsAll.filter((r) => !r.no_delivery)
@@ -51,9 +67,10 @@ export default function GeoTable({
       o.leads += r.leads
       o.crm_leads += r.crm_leads
       o.qual += r.qual
+      for (const [k, n] of r.stages) o.stages.set(k, (o.stages.get(k) || 0) + n)
       return o
     },
-    { spend: 0, leads: 0, crm_leads: 0, qual: 0 },
+    { spend: 0, leads: 0, crm_leads: 0, qual: 0, stages: new Map<string, number>() },
   )
 
   return (
@@ -79,7 +96,7 @@ export default function GeoTable({
       ) : (
         <>
           <div className="overflow-x-auto -mx-1">
-            <table className="w-full text-[13px] min-w-[500px]">
+            <table className={`w-full text-[13px] ${stageCols.length ? 'min-w-[680px]' : 'min-w-[500px]'}`}>
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wide text-dim">
                   <th className="font-medium py-1.5 pl-1">
@@ -91,13 +108,18 @@ export default function GeoTable({
                   <th className="font-medium py-1.5 text-right">Лиды</th>
                   <th className="font-medium py-1.5 text-right">CPL</th>
                   <th className="font-medium py-1.5 text-right">Квалы</th>
+                  {stageCols.map((c) => (
+                    <th key={c.key} className="font-medium py-1.5 text-right" title={stageLabel(c.key)}>
+                      {stageShort(c.key)}
+                    </th>
+                  ))}
                   <th className="font-medium py-1.5 text-right">CPQL</th>
                   <th className="font-medium py-1.5 text-right pr-1">% квала</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <Row key={r.country} r={r} maxSpend={maxSpend} />
+                  <Row key={r.country} r={r} maxSpend={maxSpend} stageCols={stageCols} />
                 ))}
               </tbody>
               <tfoot>
@@ -116,6 +138,9 @@ export default function GeoTable({
                   >
                     {int(totals.qual)}
                   </td>
+                  {stageCols.map((c) => (
+                    <StageCell key={c.key} n={totals.stages.get(c.key) || 0} color={c.color} cls="py-2" />
+                  ))}
                   <td className="py-2 text-right tabular text-ink font-medium">
                     {totals.qual ? moneySmart(totals.spend / totals.qual) : '—'}
                   </td>
@@ -159,6 +184,15 @@ export default function GeoTable({
                           · {int(r.qual)} {plural(r.qual, 'квал', 'квала', 'квалов')}
                         </span>
                       )}
+                      {stageCols.map((c) => {
+                        const n = r.stages.get(c.key) || 0
+                        return n > 0 ? (
+                          <span key={c.key} className="tabular font-medium" style={{ color: c.color }}>
+                            {' '}
+                            · {int(n)} {stageShort(c.key).toLowerCase()}
+                          </span>
+                        ) : null
+                      })}
                     </span>
                   ))}
               </div>
@@ -170,14 +204,22 @@ export default function GeoTable({
   )
 }
 
-function Row({ r, maxSpend }: { r: GeoRow; maxSpend: number }) {
+function Row({ r, maxSpend, stageCols }: { r: GeoRow; maxSpend: number; stageCols: StageCol[] }) {
   // The CRM lead count is the denominator behind "% квала", so it belongs in the
-  // row's tooltip rather than in an eighth column nobody can read on a phone.
+  // row's tooltip rather than in yet another column nobody can read on a phone.
+  // Same for the cost of each stage.
+  const stageLines = stageCols
+    .map((c) => {
+      const n = r.stages.get(c.key) || 0
+      return n ? `\n${stageLabel(c.key)}: ${int(n)} · ${moneySmart(r.spend / n)} за штуку` : ''
+    })
+    .join('')
   const title =
     `${r.name} · ${r.country}\n` +
     `Расход ${money(r.spend)} · показы ${int(r.impressions)} · клики ${int(r.clicks)}\n` +
     `Лиды Meta: ${int(r.leads)} · записано в CRM: ${int(r.crm_leads)}\n` +
-    `Квалов: ${int(r.qual)}`
+    `Квалов: ${int(r.qual)}` +
+    stageLines
 
   return (
     <tr className="border-t border-line2" title={title}>
@@ -199,6 +241,9 @@ function Row({ r, maxSpend }: { r: GeoRow; maxSpend: number }) {
       >
         {int(r.qual)}
       </td>
+      {stageCols.map((c) => (
+        <StageCell key={c.key} n={r.stages.get(c.key) || 0} color={c.color} cls="py-1.5" />
+      ))}
       <td
         className="py-1.5 text-right tabular font-medium"
         style={{ color: r.cpql === null ? COLORS.dim : COLORS.gold }}
@@ -209,5 +254,13 @@ function Row({ r, maxSpend }: { r: GeoRow; maxSpend: number }) {
         {r.qual_rate === null || !r.qual ? '—' : pct(r.qual_rate, 1)}
       </td>
     </tr>
+  )
+}
+
+function StageCell({ n, color, cls }: { n: number; color: string; cls: string }) {
+  return (
+    <td className={`${cls} text-right tabular font-medium`} style={{ color: n ? color : COLORS.dim }}>
+      {int(n)}
+    </td>
   )
 }

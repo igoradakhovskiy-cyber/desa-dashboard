@@ -125,16 +125,22 @@ export default function App() {
             <LangSplit rows={rows} idx={idx} total={metrics} crmRows={crmRows} />
           </div>
           {ds.crm && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <SalesFunnel
-                ds={ds}
-                idx={idx}
-                filters={filters}
-                basis={basis}
-                setBasis={setBasis}
-                spend={metrics.spend}
-              />
-              <GeoTable ds={ds} idx={idx} filters={filters} />
+            // 2:3, not 1:1 — the geo table carries the funnel stages as columns and
+            // would scroll sideways at half width
+            <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+              <div className="xl:col-span-2 *:h-full">
+                <SalesFunnel
+                  ds={ds}
+                  idx={idx}
+                  filters={filters}
+                  basis={basis}
+                  setBasis={setBasis}
+                  spend={metrics.spend}
+                />
+              </div>
+              <div className="xl:col-span-3 *:h-full">
+                <GeoTable ds={ds} idx={idx} filters={filters} />
+              </div>
             </div>
           )}
           <Campaigns
