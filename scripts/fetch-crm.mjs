@@ -57,8 +57,10 @@ const DASHBOARD_URL =
  * A filter left on the sheet drops `rows_total` off a cliff — 3118 → 33 on
  * 27.07.2026, which killed the whole deploy for two days. Anything past this
  * much shrinkage is breakage, never organic: rows are only ever appended.
+ * Was 0.4 until 12.11.2026, when «История статусов» was rebuilt down to exactly
+ * 500 rows (656 the day before, −38 quals in the window) and slipped under it.
  */
-const ROWS_DROP_LIMIT = 0.4
+const ROWS_DROP_LIMIT = 0.1
 /**
  * Past this share of unparsable dates the date column itself has changed format
  * (someone reformatted the column, or the locale flipped). Without this the rows
@@ -104,7 +106,8 @@ const HIST_FIELDS = {
   country: 'Страна',
   campaign: 'UTM Campaign',
   ad: 'UTM Content',
-  lost: 'Lost / Closed', // terminal, not a funnel stage
+  // terminal, not a funnel stage; renamed «Lost / Closed» → «Lost and Closed» 12.11.2026
+  lost: ['Lost and Closed', 'Lost / Closed'],
 }
 
 /**
@@ -114,18 +117,19 @@ const HIST_FIELDS = {
  */
 const STAGE_RE = /^\d{2}\.\s*\S/
 /**
+ * Stage key = header WITHOUT its "NN." number. Sales renumbers the ladder when it
+ * inserts a rung (12.11.2026: «11. Doc Preparation» shifted everything by one and
+ * turned 05.Qualified into 06.Qualified), and a numbered key broke the build.
+ */
+export const stageKey = (header) => String(header).trim().replace(/^\d{2}\.\s*/, '')
+/**
  * The won deal. Unnumbered in the sheet, but it IS the bottom of the funnel: sales
  * stamps it on a closed deal without back-filling 12 and 13, so read it as the
  * deepest stage and the cumulative rule counts those two as reached too.
  */
 const STAGE_WON = 'SUCCESS'
 /** Absence of any of these is not "a column was added", it is "the tab moved". */
-const STAGES_REQUIRED = [
-  '05.Qualified',
-  '06.Meeting Set',
-  '07.Online Meeting',
-  '13.Contract Payment Received',
-]
+const STAGES_REQUIRED = ['Qualified', 'Meeting Set', 'Online Meeting']
 
 // ------------------------------------------------------------- utilities ----
 /** RFC4180-ish CSV parser: handles quoted fields, escaped quotes and embedded newlines. */
@@ -319,12 +323,12 @@ function verifyBaseHeader(hdr, loud = true) {
  * log counting columns.
  */
 export function resolveHistColumns(hdr, loud = true) {
-  const at = (name) => hdr.findIndex((c) => String(c).trim() === name)
+  const at = (names) => hdr.findIndex((c) => [names].flat().includes(String(c).trim()))
   const col = {}
   const missing = []
   for (const [field, name] of Object.entries(HIST_FIELDS)) {
     const i = at(name)
-    if (i < 0) missing.push(`колонка "${name}"`)
+    if (i < 0) missing.push(`колонка "${[name].flat().join('" / "')}"`)
     col[field] = i
   }
   if (missing.length) {
@@ -338,7 +342,7 @@ export function resolveHistColumns(hdr, loud = true) {
   const stages = []
   hdr.forEach((c, i) => {
     const key = String(c).trim()
-    if (i > col.ad && (STAGE_RE.test(key) || key === STAGE_WON)) stages.push({ key, col: i })
+    if (i > col.ad && (STAGE_RE.test(key) || key === STAGE_WON)) stages.push({ key: stageKey(key), col: i })
   })
   const absent = STAGES_REQUIRED.filter((k) => !stages.some((s) => s.key === k))
   if (absent.length) {
@@ -430,8 +434,9 @@ export function splitLayers(crm) {
         geo: geo
           .filter((r) => r.qual)
           .map(({ date, campaign_id, country, qual }) => ({ date, campaign_id, country, qual })),
-        stages: crm.stages,
-        stage_defs: crm.stage_defs || [],
+        // published before 12.11.2026 with numbered keys ("05.Qualified")
+        stages: crm.stages.map((r) => ({ ...r, stage: stageKey(r.stage) })),
+        stage_defs: (crm.stage_defs || []).map((d) => ({ ...d, key: stageKey(d.key) })),
         lost: crm.lost || [],
       }
     : null
@@ -457,8 +462,10 @@ export function diagnose({ tab, baseline, rowsTotal, inWindow, badDate, rate }) 
         `(−${(((prev - rowsTotal) / prev) * 100).toFixed(0)}%). Строки в эту выгрузку только добавляются, ` +
         'так что это не естественная убыль.',
       hint:
-        `Почти наверняка на вкладке "${tab}" оставлен фильтр: экспорт Google Sheets отдаёт ` +
-        'только видимые строки. Снимите фильтр (Данные → Отключить фильтр) и нажмите «Обновить данные».',
+        `Либо на вкладке "${tab}" оставлен фильтр (экспорт Google Sheets отдаёт только видимые ` +
+        'строки — снимите его: Данные → Отключить фильтр), либо выгрузка из CRM обрезала лист ' +
+        '(ровное число строк вроде 500 — признак лимита выгрузки). Как только строки вернутся, ' +
+        'дашборд разморозится сам.',
     }
   }
   if (rowsTotal && badDate / rowsTotal > BAD_DATE_LIMIT) {
@@ -981,7 +988,7 @@ async function main() {
     console.log(`    ${def.key.padEnd(30)} ${String(n).padStart(4)}   ${cost}`)
   }
   const lostN = crm.lost.reduce((s, r) => s + r.n, 0)
-  console.log(`    ${'Lost / Closed'.padEnd(30)} ${String(lostN).padStart(4)}`)
+  console.log(`    ${'Lost and Closed'.padEnd(30)} ${String(lostN).padStart(4)}`)
   console.log(
     `  unmatched         "${SHEET_TAB}": macro ${base.unmatched.macro} · unknown campaign ` +
       `${base.unmatched.unknown_campaign} · unknown ad ${base.unmatched.unknown_ad} · no utm ${base.unmatched.no_utm}`,
@@ -1032,12 +1039,12 @@ async function main() {
       // WhatsApp traffic as a broken join.
       ['organic quals (no utm)', stg.unmatched.no_utm, 4],
       ['unknown campaign rows (история)', stg.unmatched.unknown_campaign, 1],
-      ['05.Qualified reached', stageOf('05.Qualified'), 25],
+      ['Qualified reached', stageOf('Qualified'), 25],
       // 8 rows carry a 06.Meeting Set date; 2 more jumped straight to 07 and are
       // counted here too. This gap IS the cumulative rule — if it closes, the rule
       // silently reverted to per-column counting.
-      ['06.Meeting Set reached', stageOf('06.Meeting Set'), 10],
-      ['07.Online Meeting reached', stageOf('07.Online Meeting'), 7],
+      ['Meeting Set reached', stageOf('Meeting Set'), 10],
+      ['Online Meeting reached', stageOf('Online Meeting'), 7],
       ['403 qualified', byCamp.get(c403?.id)?.qual, 14],
     ]
     console.log('\n──── --verify against the 29.07.2026 Meta window ────')

@@ -43,9 +43,9 @@ function throws(label, fn) {
 const HEADER = [
   'ID сделки', 'Ответственный', 'Создана', 'Текущий статус', 'Откат', 'Страна', 'Источник',
   'UTM Source', 'UTM Medium', 'UTM Campaign', 'UTM Content',
-  '05.Qualified', '06.Meeting Set', '07.Online Meeting', '08.Zoom with Founder',
-  '09.on-site Visit', '10.Booking', '11.Due diligence', '12.Contract signed',
-  '13.Contract Payment Received', 'SUCCESS', 'Lost / Closed',
+  '06.Qualified', '07.Meeting Set', '08.Online Meeting', '09.Zoom with Founder',
+  '10.on-site Visit', '11. Doc Preparation', '12.Booking', '13.Due diligence', '14.Contract signed',
+  '15.Pending Contract Payment', 'SUCCESS', 'Lost and Closed',
 ]
 
 /** A row as {column name: value}; anything unset is blank. */
@@ -67,11 +67,11 @@ const base = {
 
 /** Four quals: one plain, one with a meeting, one that SKIPPED the meeting rung, one via WhatsApp (no UTM). */
 const ROWS = [
-  row({ ...base, '05.Qualified': '10.06.2026' }),
-  row({ ...base, '05.Qualified': '10.06.2026', '06.Meeting Set': '12.06.2026' }),
+  row({ ...base, '06.Qualified': '10.06.2026' }),
+  row({ ...base, '06.Qualified': '10.06.2026', '07.Meeting Set': '12.06.2026' }),
   // no 06 date, but a 07 date — the case the cumulative rule exists for
-  row({ ...base, '05.Qualified': '11.06.2026', '07.Online Meeting': '15.06.2026' }),
-  row({ ...base, 'UTM Campaign': '—', 'UTM Content': '—', '05.Qualified': '10.06.2026' }),
+  row({ ...base, '06.Qualified': '11.06.2026', '08.Online Meeting': '15.06.2026' }),
+  row({ ...base, 'UTM Campaign': '—', 'UTM Content': '—', '06.Qualified': '10.06.2026' }),
 ]
 
 const read = (header, rows) => {
@@ -99,12 +99,12 @@ console.log('\n── базовая раскладка ──')
     { date: '2026-06-10', campaign_id: WHATSAPP_ID, ad_key: null, qual: 1 },
   ])
   check('и в гео тоже', l.geo.filter((r) => r.campaign_id === WHATSAPP_ID).length, 1)
-  check('05.Qualified', t['05.Qualified'], 4)
+  check('Qualified', t['Qualified'], 4)
   // 1 стоит дата в 06 + 1 перескочивший сразу в 07 = 2
-  check('06.Meeting Set засчитан кумулятивно', t['06.Meeting Set'], 2)
-  check('07.Online Meeting', t['07.Online Meeting'], 1)
-  check('пустой этап не попал в stages', t['09.on-site Visit'], undefined)
-  check('все 10 этапов объявлены (9 номерных + SUCCESS)', l.stage_defs.length, 10)
+  check('06.Meeting Set засчитан кумулятивно', t['Meeting Set'], 2)
+  check('07.Online Meeting', t['Online Meeting'], 1)
+  check('пустой этап не попал в stages', t['on-site Visit'], undefined)
+  check('все 11 этапов объявлены (10 номерных + SUCCESS)', l.stage_defs.length, 11)
   check('SUCCESS — самый глубокий', l.stage_defs.at(-1).key, 'SUCCESS')
   check('страна едет в строках этапов', [...new Set(l.stages.map((r) => r.country))], ['RS'])
 }
@@ -112,12 +112,12 @@ console.log('\n── базовая раскладка ──')
 console.log('\n── сделку закрыли в SUCCESS, пропустив договор ──')
 {
   const l = read(HEADER, [
-    row({ ...base, 'Страна': 'France', '07.Online Meeting': '15.06.2026', 'SUCCESS': '20.06.2026' }),
+    row({ ...base, 'Страна': 'France', '08.Online Meeting': '15.06.2026', 'SUCCESS': '20.06.2026' }),
   ])
   const t = totals(l)
   check('SUCCESS засчитан', t['SUCCESS'], 1)
-  check('и договор тоже, хоть даты нет', t['12.Contract signed'], 1)
-  check('и бронь', t['10.Booking'], 1)
+  check('и договор тоже, хоть даты нет', t['Contract signed'], 1)
+  check('и бронь', t['Booking'], 1)
   check('страна сделки', l.stages.find((r) => r.stage === 'SUCCESS')?.country, 'FR')
 }
 
@@ -142,31 +142,38 @@ console.log('\n── вставили колонку в середину ──
 console.log('\n── добавили новый этап в конец воронки ──')
 {
   const at = HEADER.indexOf('SUCCESS')
-  const hdr = [...HEADER.slice(0, at), '14.Keys Handed Over', ...HEADER.slice(at)]
+  const hdr = [...HEADER.slice(0, at), '16.Keys Handed Over', ...HEADER.slice(at)]
   const rows = ROWS.map((r, i) => {
     const v = [...r.slice(0, at), i === 1 ? '20.06.2026' : '', ...r.slice(at)]
     return v
   })
   const l = read(hdr, rows)
   const t = totals(l)
-  check('этап подхватился сам', l.stage_defs.map((d) => d.key).includes('14.Keys Handed Over'), true)
+  check('этап подхватился сам', l.stage_defs.map((d) => d.key).includes('Keys Handed Over'), true)
   // sheet order: the new column sits before SUCCESS, so the won deal stays the bottom
-  check('и он глубже всех номерных', l.stage_defs.at(-2).key, '14.Keys Handed Over')
-  check('дошедший до него засчитан', t['14.Keys Handed Over'], 1)
+  check('и он глубже всех номерных', l.stage_defs.at(-2).key, 'Keys Handed Over')
+  check('дошедший до него засчитан', t['Keys Handed Over'], 1)
   // и он же теперь считается дошедшим до всех этапов выше
-  check('и во все этапы выше тоже', t['12.Contract signed'], 1)
+  check('и во все этапы выше тоже', t['Contract signed'], 1)
 }
 
 console.log('\n── в ячейке этапа текст вместо даты ──')
 {
   const rows = ROWS.map((r) => [...r])
-  rows[1][HEADER.indexOf('07.Online Meeting')] = 'перенесли на след. неделю'
+  rows[1][HEADER.indexOf('08.Online Meeting')] = 'перенесли на след. неделю'
   const l = read(HEADER, rows)
   const t = totals(l)
   check('замечено и посчитано', l.unmatched.bad_stage_date, 1)
-  check('этап не засчитан', t['07.Online Meeting'], 1)
-  check('сделка осталась на предыдущем этапе', t['06.Meeting Set'], 2)
+  check('этап не засчитан', t['Online Meeting'], 1)
+  check('сделка осталась на предыдущем этапе', t['Meeting Set'], 2)
   check('и из квалов не пропала', l.qual_total, 4)
+}
+
+console.log('\n── продажи перенумеровали этапы ──')
+{
+  const old = HEADER.map((h) => ({ '06.Qualified': '05.Qualified', '07.Meeting Set': '06.Meeting Set',
+    '08.Online Meeting': '07.Online Meeting', 'Lost and Closed': 'Lost / Closed' })[h] || h)
+  check('ключи этапов не зависят от номера', totals(read(old, ROWS)), totals(read(HEADER, ROWS)))
 }
 
 console.log('\n── удалили обязательную колонку ──')
@@ -175,7 +182,7 @@ console.log('\n── удалили обязательную колонку ─
   throws('падаем на отсутствии «Создана»', () =>
     resolveHistColumns(parseCsv(csv([...HEADER.slice(0, at), ...HEADER.slice(at + 1)], []))[0], false),
   )
-  const s = HEADER.indexOf('06.Meeting Set')
+  const s = HEADER.indexOf('07.Meeting Set')
   throws('падаем на отсутствии обязательного этапа', () =>
     resolveHistColumns(parseCsv(csv([...HEADER.slice(0, s), ...HEADER.slice(s + 1)], []))[0], false),
   )
@@ -264,10 +271,10 @@ console.log('\n── разбор задеплоенного блока на с
       { date: '2026-06-11', campaign_id: WHATSAPP_ID, ad_key: null, qual: 1 },
     ],
     geo: [{ date: '2026-06-10', campaign_id: 'c1', country: 'RS', qual: 3 }],
-    stage_defs: [{ key: '05.Qualified', depth: 0 }, { key: '06.Meeting Set', depth: 1 }],
+    stage_defs: [{ key: 'Qualified', depth: 0 }, { key: 'Meeting Set', depth: 1 }],
     stages: [
-      { stage: '05.Qualified', lead_date: '2026-06-10', event_date: '2026-06-10', campaign_id: 'c1', ad_key: 'Ad1', n: 3 },
-      { stage: '06.Meeting Set', lead_date: '2026-06-10', event_date: '2026-06-14', campaign_id: 'c1', ad_key: 'Ad1', n: 1 },
+      { stage: 'Qualified', lead_date: '2026-06-10', event_date: '2026-06-10', campaign_id: 'c1', ad_key: 'Ad1', n: 3 },
+      { stage: 'Meeting Set', lead_date: '2026-06-10', event_date: '2026-06-14', campaign_id: 'c1', ad_key: 'Ad1', n: 1 },
     ],
     lost: [{ lead_date: '2026-06-10', event_date: '2026-06-20', campaign_id: 'c1', ad_key: 'Ad1', n: 1 }],
   }

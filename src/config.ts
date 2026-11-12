@@ -142,29 +142,33 @@ export const QUAL_EST_HINT =
  * label on the dashboard than a stage that silently does not exist.
  */
 export const STAGE_LABEL: Record<string, string> = {
-  '05.Qualified': 'Квал-лид',
-  '06.Meeting Set': 'Встреча назначена',
-  '07.Online Meeting': 'Онлайн-встреча проведена',
-  '08.Zoom with Founder': 'Zoom с основателем',
-  '09.on-site Visit': 'Визит на объект',
-  '10.Booking': 'Бронь',
-  '11.Due diligence': 'Due diligence',
-  '12.Contract signed': 'Договор подписан',
-  '13.Contract Payment Received': 'Оплата получена',
+  Qualified: 'Квал-лид',
+  'Meeting Set': 'Встреча назначена',
+  'Online Meeting': 'Онлайн-встреча проведена',
+  'Zoom with Founder': 'Zoom с основателем',
+  'on-site Visit': 'Визит на объект',
+  'Doc Preparation': 'Подготовка документов',
+  Booking: 'Бронь',
+  'Due diligence': 'Due diligence',
+  'Contract signed': 'Договор подписан',
+  'Pending Contract Payment': 'Ожидание оплаты',
+  'Contract Payment Received': 'Оплата получена',
   SUCCESS: 'Сделка закрыта',
 }
 
 /** Short forms for table headers, where the full label would wreck the layout. */
 export const STAGE_SHORT: Record<string, string> = {
-  '05.Qualified': 'Квалы',
-  '06.Meeting Set': 'Встреча',
-  '07.Online Meeting': 'Онлайн',
-  '08.Zoom with Founder': 'Zoom',
-  '09.on-site Visit': 'Визит',
-  '10.Booking': 'Бронь',
-  '11.Due diligence': 'DD',
-  '12.Contract signed': 'Договор',
-  '13.Contract Payment Received': 'Оплата',
+  Qualified: 'Квалы',
+  'Meeting Set': 'Встреча',
+  'Online Meeting': 'Онлайн',
+  'Zoom with Founder': 'Zoom',
+  'on-site Visit': 'Визит',
+  'Doc Preparation': 'Документы',
+  Booking: 'Бронь',
+  'Due diligence': 'DD',
+  'Contract signed': 'Договор',
+  'Pending Contract Payment': 'Ждём оплату',
+  'Contract Payment Received': 'Оплата',
   SUCCESS: 'Сделка',
 }
 
@@ -173,7 +177,7 @@ export const STAGE_SHORT: Record<string, string> = {
  * not the whole ladder: nine more columns would bury the country P&L. Qualified
  * is already the «Квалы» column.
  */
-export const GEO_STAGES = ['07.Online Meeting', '10.Booking', '12.Contract signed', 'SUCCESS']
+export const GEO_STAGES = ['Online Meeting', 'Booking', 'Contract signed', 'SUCCESS']
 
 /** Strips the "NN." prefix so an untranslated stage still reads like a name. */
 const rawStageName = (key: string) => key.replace(/^\d{2}\.\s*/, '')
@@ -214,7 +218,7 @@ export const BASIS_HINT =
   '«По дате этапа» — этап считается в тот день, который стоит в колонке ЭТОГО этапа на листе ' +
   '«История статусов»: у «Встреча назначена» это дата назначения встречи, у «Онлайн-встреча» — дата ' +
   'созвона. Если этап пропущен — берётся дата ближайшего заполненного этапа глубже; если у квала не ' +
-  'проставлен 05.Qualified — дата создания лида.\n\n' +
+  'проставлен Qualified — дата создания лида.\n\n' +
   'В коротком периоде цифр в этом режиме больше: подтягиваются сделки по старым заявкам, чей расход ' +
   'в период не входит, поэтому цена этапа занижена. Для оценки закупки — «по дате заявки», ' +
   'для контроля отдела продаж — «по дате этапа».'
