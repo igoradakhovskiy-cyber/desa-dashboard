@@ -14,6 +14,7 @@
 
 import {
   WHATSAPP_ID,
+  deferredQualRows,
   diagnose,
   mergeLayers,
   parseCsv,
@@ -174,6 +175,29 @@ console.log('\n── продажи перенумеровали этапы ─
   const old = HEADER.map((h) => ({ '06.Qualified': '05.Qualified', '07.Meeting Set': '06.Meeting Set',
     '08.Online Meeting': '07.Online Meeting', 'Lost and Closed': 'Lost / Closed' })[h] || h)
   check('ключи этапов не зависят от номера', totals(read(old, ROWS)), totals(read(HEADER, ROWS)))
+}
+
+console.log('\n── квалы из воронки Deferred demand ──')
+{
+  // client_data: A ID · B дата · E воронка · F квалификация · H страна · O кампания · P объявление
+  const cd = (id, pipe, q, camp = 'Camp A') => {
+    const r = new Array(27).fill('')
+    Object.assign(r, { 0: id, 1: '12.06.2026', 4: pipe, 5: q, 7: 'Italy', 14: camp, 15: camp === '—' ? '—' : 'Ad1' })
+    return r
+  }
+  const histRows = ROWS.map((r, i) => { const v = [...r]; v[0] = `h${i}`; return v })
+  const hist = resolveHistColumns(HEADER)
+  const extra = deferredQualRows(
+    [cd('d1', 'Deferred demand', 'Qualified'), cd('d2', 'Deferred demand', ''),
+     cd('d3', 'EN Sales Pipeline', 'Qualified'), cd('h1', 'Deferred demand', 'Qualified'),
+     cd('d4', 'Deferred demand', 'Qualified', '—')],
+    HEADER, histRows, hist,
+  )
+  check('взяты только квалы Deferred, без дублей с листа', extra.length, 2)
+  const l = readStageLayer([...histRows, ...extra], hist, LOOKUPS, MIN, MAX)
+  check('квалов стало 4 + 2', l.qual_total, 6)
+  check('без UTM ушёл в WhatsApp', l.qual_whatsapp, 2)
+  check('глубже квала не засчитан', totals(l)['Meeting Set'], 2)
 }
 
 console.log('\n── удалили обязательную колонку ──')

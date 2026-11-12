@@ -75,6 +75,7 @@ const BAD_DATE_LIMIT = 0.3
  * A name lookup would silently grab the wrong one.
  */
 const COL = {
+  id: 0, // A  ID сделки
   date: 1, // B  Дата создания        DD.MM.YYYY
   qual: 5, // F  Квалификация         "" | "Qualified"   ← cross-check only, see below
   pipeline: 4, // E  Воронка
@@ -86,7 +87,9 @@ const COL = {
 
 /** Header cells that must match exactly, or the tab/layout changed under us. */
 const EXPECTED_HEADER = {
+  0: 'ID сделки',
   1: 'Дата создания',
+  4: 'Воронка',
   5: 'Квалификация',
   6: 'Статус',
   7: 'Страна',
@@ -353,6 +356,42 @@ export function resolveHistColumns(hdr, loud = true) {
     throw new Error(`CRM header validation failed for "${HIST_TAB}"`)
   }
   return { col, stages }
+}
+
+/**
+ * Quals that sales parked in the «Deferred demand» pipeline.
+ *
+ * Since 12.11.2026 «История статусов» is an IMPORTRANGE of the CRM's «Stage
+ * Timeline», which covers EN Sales Pipeline only. A qualified lead moved to
+ * Deferred demand («через 4–6 месяцев») drops off it — 49 quals in the window
+ * vanished overnight, and the hand-kept sheet before it did include them (the
+ * monthly reports, 69 for 12.08–11.09, count them). client_data still knows
+ * them: pipeline = Deferred demand, column F = Qualified.
+ *
+ * They come back as synthetic rows in the history tab's own layout, so matching,
+ * WhatsApp, geo and the funnel treat them exactly like any other qual. Only the
+ * Qualified rung is stamped (with the creation date — the same proxy the funnel
+ * uses for every qual): how far they got before being parked is not exported.
+ */
+export const DEFERRED_PIPELINE = 'Deferred demand'
+export function deferredQualRows(baseBody, histHeader, histBody, hist) {
+  const idAt = histHeader.findIndex((h) => String(h).trim() === 'ID сделки')
+  const seen = new Set(idAt >= 0 ? histBody.map((r) => cell(r, idAt)) : [])
+  const out = []
+  for (const r of baseBody) {
+    if (cell(r, COL.pipeline) !== DEFERRED_PIPELINE || cell(r, COL.qual) !== 'Qualified') continue
+    if (seen.has(cell(r, COL.id))) continue
+    const row = new Array(histHeader.length).fill('')
+    if (idAt >= 0) row[idAt] = cell(r, COL.id)
+    row[hist.col.date] = cell(r, COL.date)
+    row[hist.col.status] = DEFERRED_PIPELINE
+    row[hist.col.country] = cell(r, COL.country)
+    row[hist.col.campaign] = cell(r, COL.campaign)
+    row[hist.col.ad] = cell(r, COL.ad)
+    row[hist.stages[0].col] = cell(r, COL.date)
+    out.push(row)
+  }
+  return out
 }
 
 // ------------------------------------------------------------- baseline -----
@@ -870,10 +909,12 @@ async function main() {
   // ---- layer 2: История статусов ---------------------------------------------
   const histFetch = await fetchTab({ tab: HIST_TAB, gid: HIST_GID, validate: resolveHistColumns })
   const hist = histFetch.meta
-  const histBody = histFetch.rows.slice(1)
+  const histSheet = histFetch.rows.slice(1)
+  const deferred = deferredQualRows(baseBody, histFetch.rows[0], histSheet, hist)
+  const histBody = [...histSheet, ...deferred]
   console.log(
-    `  "${HIST_TAB}" via ${histFetch.via}: ${histBody.length} data rows · ` +
-      `этапы: ${hist.stages.map((s) => s.key).join(' → ')}`,
+    `  "${HIST_TAB}" via ${histFetch.via}: ${histSheet.length} data rows + ${deferred.length} квалов ` +
+      `«${DEFERRED_PIPELINE}» из "${SHEET_TAB}" · этапы: ${hist.stages.map((s) => s.key).join(' → ')}`,
   )
   const stg = readStageLayer(histBody, hist, lookups, MIN, MAX)
 
