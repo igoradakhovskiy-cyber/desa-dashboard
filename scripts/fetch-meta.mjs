@@ -34,7 +34,9 @@ const PROJECT = process.env.PROJECT_NAME || 'Desa Harmonis 2'
 // DESA2 campaigns (400–406) launched 16.06.2026; older flights in this account
 // (Desa_inv, HunterMob) are a different offer/geo and would only add noise.
 const MIN_DATE = process.env.MIN_DATE || '2026-06-16'
-const LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 120)
+// 0 = no rolling cutoff: the window always starts at MIN_DATE, so "Всё время"
+// never drifts forward. A 120-day lookback silently cut June–July on 25.11.2026.
+const LOOKBACK_DAYS = Number(process.env.LOOKBACK_DAYS || 0)
 // all four lead action_types report identically on this account (707 over 90d),
 // so 'lead' is safe and matches Ads Manager
 const PRIMARY_LEAD_TYPE = process.env.LEAD_TYPE || 'lead'
@@ -330,8 +332,8 @@ async function main() {
   await fs.mkdir(path.dirname(OUT_FILE), { recursive: true })
 
   const until = new Date()
-  const sinceD = new Date(until.getTime() - LOOKBACK_DAYS * 86400000)
-  const since = ymd(sinceD) < MIN_DATE ? MIN_DATE : ymd(sinceD)
+  const sinceD = LOOKBACK_DAYS > 0 ? ymd(new Date(until.getTime() - LOOKBACK_DAYS * 86400000)) : MIN_DATE
+  const since = sinceD < MIN_DATE ? MIN_DATE : sinceD
   const timeRange = JSON.stringify({ since, until: ymd(until) })
   console.log(`▶ Account ${ACCOUNT_ID} · window ${since} → ${ymd(until)}`)
 

@@ -104,6 +104,48 @@ function Cells({
   )
 }
 
+/**
+ * Column geometry. With the full funnel on (up to ~12 stage columns) the numbers
+ * alone are wider than the card, so the table scrolls sideways and the name
+ * column is sticky: before 25.11.2026 the fixed-width numbers squeezed the
+ * flex-1 name to zero and nobody could tell which campaign a row was.
+ */
+const NAME_MIN = 240
+const GAP = 8
+function cellsWidth(hasCrm: boolean, stageN: number): number {
+  const widths = [96, 48, 64, ...(hasCrm ? [48, 64] : []), ...Array(stageN).fill(86), 56]
+  return widths.reduce((a, b) => a + b, 0) + GAP * (widths.length - 1)
+}
+// row padding + chevron + gaps + two nesting levels (ml-4 pl-3 each) + ad poster
+const ROW_CHROME = 20 + 12 + 12 + 12 + 2 * 28 + 30
+
+/** Sticky left cell: stays put while the numbers scroll under it. */
+const STICKY = 'sticky left-0 z-10 bg-card self-stretch flex items-center gap-3 flex-1 min-w-0'
+
+function HeadRow({ hasCrm, stages }: { hasCrm: boolean; stages: CrmStageDef[] }) {
+  return (
+    <div className="hidden sm:flex items-center border-b border-line2 text-[11px] uppercase tracking-wide text-dim">
+      <div className={`${STICKY} pl-2.5 pr-3 py-2`}>
+        <span className="w-3" />
+        <span>Кампания</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0 pr-2.5">
+        <span className="w-20 sm:w-24 text-right">Расход</span>
+        <span className="w-12 text-right">Лиды</span>
+        <span className="w-16 text-right">CPL</span>
+        {hasCrm && <span className="w-12 text-right">Квалы</span>}
+        {hasCrm && <span className="w-16 text-right">CPQL</span>}
+        {stages.map((d) => (
+          <span key={d.key} className="hidden lg:inline w-[86px] text-right leading-tight" title={d.key}>
+            {stageShort(d.key)}
+          </span>
+        ))}
+        <span className="w-14 text-right">CTR</span>
+      </div>
+    </div>
+  )
+}
+
 function Chevron({ open }: { open: boolean }) {
   return (
     <span
@@ -166,24 +208,14 @@ export default function Campaigns({
           'Клик по кампании → адсеты → объявления. Сортировка по расходу.' +
           (hasCrm ? ' В выгрузке CRM нет адсета, поэтому квалы там — прочерк.' : '')
         }
-        right={
-          <div className="hidden sm:flex items-center gap-2 text-[11px] uppercase tracking-wide text-dim">
-            <span className="w-20 sm:w-24 text-right">Расход</span>
-            <span className="w-12 text-right">Лиды</span>
-            <span className="w-16 text-right">CPL</span>
-            {hasCrm && <span className="w-12 text-right">Квалы</span>}
-            {hasCrm && <span className="w-16 text-right">CPQL</span>}
-            {stages.map((d) => (
-              <span key={d.key} className="hidden lg:inline w-[86px] text-right" title={d.key}>
-                {stageShort(d.key)}
-              </span>
-            ))}
-            <span className="w-14 text-right">CTR</span>
-          </div>
-        }
       />
       <Card className="p-1.5 sm:p-2">
-        <div className="divide-y divide-line2">
+        <div className="overflow-x-auto">
+        <div
+          className="divide-y divide-line2 lg:min-w-(--tw)"
+          style={{ ['--tw' as string]: `${NAME_MIN + ROW_CHROME + cellsWidth(hasCrm, stages.length)}px` }}
+        >
+          <HeadRow hasCrm={hasCrm} stages={stages} />
           {camps.map((c) => {
             const camp = idx.campById.get(c.id)
             const open = openCamp === c.id
@@ -195,22 +227,22 @@ export default function Campaigns({
                     setOpenCamp(open ? null : c.id)
                     setOpenAdset(null)
                   }}
-                  className="relative w-full text-left group"
+                  className="w-full text-left group flex items-center"
                 >
-                  <div
-                    className="absolute inset-y-1 left-0 rounded-md"
-                    style={{ width: `${w}%`, background: (camp ? langColor(camp.lang) : COLORS.mute) + '14' }}
-                  />
-                  <div className="relative flex items-center gap-3 px-2.5 py-2.5">
+                  <div className={`${STICKY} pl-2.5 pr-3 py-2.5`}>
+                    <div
+                      className="absolute inset-y-1 left-0 rounded-md"
+                      style={{ width: `${w}%`, background: (camp ? langColor(camp.lang) : COLORS.mute) + '14' }}
+                    />
                     <Chevron open={open} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm text-ink font-medium" title={camp?.name}>
-                          {camp?.name || c.id}
-                        </span>
-                        {camp && <LangBadge lang={camp.lang} />}
-                      </div>
+                    <div className="relative min-w-0 flex-1 flex items-center gap-2">
+                      <span className="truncate text-sm text-ink font-medium" title={camp?.name}>
+                        {camp?.name || c.id}
+                      </span>
+                      {camp && <LangBadge lang={camp.lang} />}
                     </div>
+                  </div>
+                  <div className="pr-2.5">
                     <Cells
                       m={c.m}
                       crm={byCamp.get(c.id)}
@@ -243,13 +275,16 @@ export default function Campaigns({
           {/* Quals with no UTM: paid traffic that wrote to WhatsApp from the site. No
               spend of its own, so it sits below the spend-ranked campaigns. */}
           {(byCamp.get(WHATSAPP_ID)?.qual || stageByCamp.get(WHATSAPP_ID)) && (
-            <div className="relative flex items-center gap-3 px-2.5 py-2.5">
-              <span className="w-3" />
-              <div className="min-w-0 flex-1 flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full shrink-0" style={{ background: WHATSAPP_COLOR }} />
-                <span className="truncate text-sm text-ink font-medium">{WHATSAPP_LABEL}</span>
-                <InfoDot text={WHATSAPP_HINT} />
+            <div className="flex items-center">
+              <div className={`${STICKY} pl-2.5 pr-3 py-2.5`}>
+                <span className="w-3" />
+                <div className="min-w-0 flex-1 flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ background: WHATSAPP_COLOR }} />
+                  <span className="truncate text-sm text-ink font-medium">{WHATSAPP_LABEL}</span>
+                  <InfoDot text={WHATSAPP_HINT} />
+                </div>
               </div>
+              <div className="pr-2.5">
               <Cells
                 m={noMetrics}
                 crm={byCamp.get(WHATSAPP_ID)}
@@ -259,11 +294,13 @@ export default function Campaigns({
                 stageCount={stageCount}
                 noSpend
               />
+              </div>
             </div>
           )}
           {camps.length === 0 && (
             <div className="py-6 text-center text-dim text-sm">Нет данных за выбранный период</div>
           )}
+        </div>
         </div>
       </Card>
     </section>
@@ -301,12 +338,14 @@ function AdsetList({
           <div key={s.id}>
             <button
               onClick={() => setOpenAdset(open ? null : s.id)}
-              className="w-full text-left flex items-center gap-3 px-2 py-1.5 rounded-md hover:bg-card2/60"
+              className="group w-full text-left flex items-center gap-3 pr-2 rounded-md hover:bg-card2"
             >
-              <Chevron open={open} />
-              <span className="min-w-0 flex-1 truncate text-sm text-mute" title={adset?.name}>
-                {adset?.name || s.id}
-              </span>
+              <div className={`${STICKY} pl-2 py-1.5 rounded-l-md group-hover:bg-card2`}>
+                <Chevron open={open} />
+                <span className="min-w-0 flex-1 truncate text-sm text-mute" title={adset?.name}>
+                  {adset?.name || s.id}
+                </span>
+              </div>
               <Cells
                 m={s.m}
                 hasCrm={hasCrm}
@@ -357,7 +396,8 @@ function AdList({
         const ad = idx.adById.get(a.id)
         const crm = ad ? byCampAd.get(`${ad.campaign_id}|${ad.name}`) : undefined
         return (
-          <div key={a.id} className="flex items-center gap-3 px-2 py-1.5">
+          <div key={a.id} className="flex items-center gap-3 pr-2">
+            <div className={`${STICKY} pl-2 py-1.5`}>
             <span className="w-3" />
             {ad?.creative.poster ? (
               <img
@@ -372,6 +412,7 @@ function AdList({
             <span className="min-w-0 flex-1 truncate text-sm text-mute" title={ad?.name}>
               {ad?.name || a.id}
             </span>
+            </div>
             <Cells
               m={a.m}
               crm={crm}
